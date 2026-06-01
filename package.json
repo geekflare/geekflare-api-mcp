@@ -15,7 +15,8 @@
     "build": "tsc && shx chmod 755 build/index.js",
     "start": "node build/index.js",
     "dev": "ts-node src/index.ts",
-    "prepublishOnly": "npm run build"
+    "test": "tsx test.ts",
+    "prepublishOnly": "npm test && npm run build"
   },
   "keywords": [
     "geekflare",
@@ -46,6 +47,7 @@
   "devDependencies": {
     "@types/node": "^22.19.19",
     "shx": "^0.3.4",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3"
   }
 }
