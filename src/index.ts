@@ -10,6 +10,40 @@ import { randomUUID } from 'crypto';
 
 const DEFAULT_BASE_URL = 'https://api.geekflare.com';
 
+// ─── Global uncaught error handlers ──────────────────────────────────────────
+// Prevents the process from dying on any unhandled rejection or exception.
+// The server stays up; only the individual request/session fails.
+
+process.on('uncaughtException', (err) => {
+  console.error('[process] uncaughtException — server stays alive:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] unhandledRejection — server stays alive:', reason);
+});
+
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+
+function setupGracefulShutdown(server: http.Server) {
+  const shutdown = (signal: string) => {
+    console.log(`[process] received ${signal}, shutting down gracefully…`);
+    server.close(() => {
+      console.log('[process] HTTP server closed');
+      process.exit(0);
+    });
+    // Force-kill after 10 s if something is stuck
+    setTimeout(() => {
+      console.error('[process] forced exit after timeout');
+      process.exit(1);
+    }, 10_000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+// ─── Tool definitions ─────────────────────────────────────────────────────────
+
 const TOOLS = [
   {
     name: 'webScrape',
@@ -237,9 +271,7 @@ const TOOLS = [
     description: 'Scan TLS/SSL configuration of a domain',
     inputSchema: {
       type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-      },
+      properties: { url: { type: 'string', description: 'Target URL' } },
       required: ['url'],
     },
   },
@@ -311,9 +343,7 @@ const TOOLS = [
     description: 'Check if DNSSEC is enabled for a domain',
     inputSchema: {
       type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-      },
+      properties: { url: { type: 'string', description: 'Target URL' } },
       required: ['url'],
     },
   },
@@ -335,9 +365,7 @@ const TOOLS = [
     description: 'Ping a host',
     inputSchema: {
       type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL or IP' },
-      },
+      properties: { url: { type: 'string', description: 'Target URL or IP' } },
       required: ['url'],
     },
   },
@@ -391,12 +419,12 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   const httpClient = axios.create({
     baseURL: baseUrl.replace(/\/$/, ''),
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    // Long-running tools (lighthouse, brokenLink, openPorts) can take a while.
+    // Keep under Cloudflare's proxy read timeout.
     timeout: 150_000,
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.3.2' },
+    { name: '@geekflare/mcp', version: '0.3.3' },
     { capabilities: { tools: {} } }
   );
 
@@ -407,10 +435,7 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
     const route = ROUTES[name];
 
     if (!route) {
-      return {
-        content: [{ type: 'text', text: `Unknown tool: ${name}` }],
-        isError: true,
-      };
+      return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
 
     try {
@@ -419,23 +444,13 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
         console.error(
-          JSON.stringify({
-            tool: name,
-            status: err.response?.status,
-            message: err.message,
-          })
+          JSON.stringify({ tool: name, status: err.response?.status, message: err.message })
         );
         const msg = JSON.stringify(err.response?.data ?? err.message);
-        return {
-          content: [{ type: 'text', text: `API Error: ${msg}` }],
-          isError: true,
-        };
+        return { content: [{ type: 'text', text: `API Error: ${msg}` }], isError: true };
       }
-      console.error(err);
-      return {
-        content: [{ type: 'text', text: `Error: ${String(err)}` }],
-        isError: true,
-      };
+      console.error('[tool] unexpected error:', err);
+      return { content: [{ type: 'text', text: `Error: ${String(err)}` }], isError: true };
     }
   });
 
@@ -452,6 +467,20 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+/**
+ * Safe JSON parse. Returns parsed value on success, or `null` on failure
+ * (avoids throwing SyntaxError into the HTTP handler).
+ */
+function safeJsonParse(raw: string): { ok: true; value: unknown } | { ok: false } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: {} }; // treat empty body as {}
+  try {
+    return { ok: true, value: JSON.parse(trimmed) };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /**
@@ -499,6 +528,34 @@ function pruneSessions() {
 
 setInterval(pruneSessions, 5 * 60 * 1000).unref();
 
+// ─── Request handler ──────────────────────────────────────────────────────────
+
+/**
+ * Wrapped transport.handleRequest that never lets an exception propagate into
+ * the outer HTTP handler (which would produce a half-written / empty response
+ * and trigger a Cloudflare 502).
+ */
+async function safeHandleRequest(
+  transport: StreamableHTTPServerTransport,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  body?: unknown
+): Promise<void> {
+  try {
+    if (body !== undefined) {
+      await transport.handleRequest(req, res, body);
+    } else {
+      await transport.handleRequest(req, res);
+    }
+  } catch (err) {
+    console.error('[transport] handleRequest threw:', err);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+  }
+}
+
 // ─── HTTP mode ────────────────────────────────────────────────────────────────
 
 const MODE = process.env.MCP_TRANSPORT ?? 'stdio';
@@ -508,179 +565,23 @@ if (MODE === 'http') {
   const BASE_URL = (process.env.API_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
 
   const httpServer = http.createServer(async (req, res) => {
-    // ── CORS pre-flight ───────────────────────────────────────────────────────
-    if (setCorsHeaders(req, res)) return;
-
-    const rawUrl = req.url ?? '/';
-    const url = new URL(rawUrl, `http://localhost:${PORT}`);
-
-    // ── /health ───────────────────────────────────────────────────────────────
-    if (url.pathname === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          status: 'ok',
-          service: '@geekflare/mcp',
-          version: '0.3.2',
-          uptime: process.uptime(),
-          sessions: sessions.size,
-        })
-      );
-      return;
-    }
-
-    // ── /{API_KEY}/mcp ────────────────────────────────────────────────────────
-    const match = url.pathname.match(/^\/([^/]+)\/mcp\/?$/);
-
-    if (!match) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found. Use /{API_KEY}/mcp' }));
-      return;
-    }
-
-    const apiKey = match[1];
-    if (!apiKey) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'API key required' }));
-      return;
-    }
-
-    // ── DELETE  →  terminate session ──────────────────────────────────────────
-    if (req.method === 'DELETE') {
-      const sessionId = req.headers['mcp-session-id'] as string | undefined;
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId)!;
-        await session.transport.close().catch(() => {});
-        sessions.delete(sessionId);
-        console.log(`[session] deleted ${sessionId}`);
-      }
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    // ── GET  →  re-attach to existing SSE stream only ─────────────────────────
-    //
-    // FIX: Do NOT return a discovery blob for unknown sessions. Clients like
-    // Cursor send GET to re-attach to an SSE stream; if there is no session,
-    // return 404 so the client falls through to POST for initialisation.
-    // Returning a JSON blob here caused Cursor to think there were "no tools".
-    if (req.method === 'GET') {
-      const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
-      if (sessionId && sessions.has(sessionId)) {
-        const session = sessions.get(sessionId)!;
-        session.lastSeen = Date.now();
-        try {
-          await session.transport.handleRequest(req, res);
-        } catch (err) {
-          console.error('[transport] GET handleRequest error:', err);
-          if (!res.headersSent) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Internal server error' }));
-          }
-        }
-        return;
-      }
-
-      // No matching session — tell the client to POST instead.
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          error: 'No active session. POST to this endpoint to initialise.',
-          usage: 'POST /{API_KEY}/mcp',
-        })
-      );
-      return;
-    }
-
-    // ── POST  →  main MCP messages ────────────────────────────────────────────
-    if (req.method === 'POST') {
-      let body: string;
-      try {
-        body = await readBody(req);
-      } catch {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Failed to read request body' }));
-        return;
-      }
-
-      let parsedBody: unknown;
-      try {
-        parsedBody = body.trim() ? JSON.parse(body) : {};
-      } catch {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
-        return;
-      }
-
-      // Route to an existing session if the client sent a session ID
-      const incomingSessionId = req.headers['mcp-session-id'] as string | undefined;
-
-      if (incomingSessionId && sessions.has(incomingSessionId)) {
-        const session = sessions.get(incomingSessionId)!;
-        session.lastSeen = Date.now();
-        try {
-          await session.transport.handleRequest(req, res, parsedBody);
-        } catch (err) {
-          console.error('[transport] POST (existing session) handleRequest error:', err);
-          if (!res.headersSent) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Internal server error' }));
-          }
-        }
-        return;
-      }
-
-      // ── New session ───────────────────────────────────────────────────────
-      const sessionId = randomUUID();
-      console.log(`[session] created ${sessionId}`);
-
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => sessionId,
-      });
-
-      const server = createMcpServer(apiKey, BASE_URL);
-
-      try {
-        await server.connect(transport);
-      } catch (err) {
-        console.error('[session] connect error:', err);
+    // Wrap the entire handler so a bug anywhere can't crash the process
+    try {
+      await handleHttpRequest(req, res, PORT, BASE_URL);
+    } catch (err) {
+      console.error('[http] top-level handler error:', err);
+      if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Failed to initialise MCP session' }));
-        return;
+        res.end(JSON.stringify({ error: 'Internal server error' }));
       }
-
-      const session: Session = { transport, server, lastSeen: Date.now() };
-      sessions.set(sessionId, session);
-
-      // Clean up when the transport closes
-      transport.onclose = () => {
-        sessions.delete(sessionId);
-        console.log(`[session] closed ${sessionId}`);
-      };
-
-      try {
-        await transport.handleRequest(req, res, parsedBody);
-      } catch (err) {
-        console.error('[transport] POST (new session) handleRequest error:', err);
-        sessions.delete(sessionId);
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Internal server error' }));
-        }
-      }
-      return;
     }
-
-    // ── Unsupported method ────────────────────────────────────────────────────
-    res.writeHead(405, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Method not allowed' }));
   });
 
   httpServer.on('error', (err) => {
     console.error('[server] error:', err);
   });
+
+  setupGracefulShutdown(httpServer);
 
   httpServer.listen(PORT, () => {
     console.log('=================================');
@@ -693,10 +594,10 @@ if (MODE === 'http') {
     console.log('=================================');
   });
 } else {
-  // ── stdio mode (Claude Desktop, local npm usage) ──────────────────────────
+  // ── stdio mode (Claude Desktop / local npm) ───────────────────────────────
   //
   // Claude Desktop does NOT support API-key-in-URL auth for remote HTTP MCP
-  // servers — it expects OAuth. Use stdio mode locally instead:
+  // servers — it expects OAuth. Use stdio mode locally:
   //
   //   {
   //     "mcpServers": {
@@ -717,4 +618,157 @@ if (MODE === 'http') {
   const server = createMcpServer(apiKey, baseUrl);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+}
+
+// ─── Core HTTP routing (extracted for top-level error wrapping) ───────────────
+
+async function handleHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  PORT: number,
+  BASE_URL: string
+): Promise<void> {
+  // ── CORS pre-flight ─────────────────────────────────────────────────────────
+  if (setCorsHeaders(req, res)) return;
+
+  const rawUrl = req.url ?? '/';
+  const url = new URL(rawUrl, `http://localhost:${PORT}`);
+
+  // ── /health ─────────────────────────────────────────────────────────────────
+  if (url.pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        status: 'ok',
+        service: '@geekflare/mcp',
+        version: '0.3.3',
+        uptime: process.uptime(),
+        sessions: sessions.size,
+      })
+    );
+    return;
+  }
+
+  // ── /{API_KEY}/mcp ───────────────────────────────────────────────────────────
+  const match = url.pathname.match(/^\/([^/]+)\/mcp\/?$/);
+
+  if (!match) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found. Use /{API_KEY}/mcp' }));
+    return;
+  }
+
+  const apiKey = match[1];
+  if (!apiKey) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'API key required' }));
+    return;
+  }
+
+  // ── DELETE  →  terminate session ─────────────────────────────────────────────
+  if (req.method === 'DELETE') {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (sessionId && sessions.has(sessionId)) {
+      const session = sessions.get(sessionId)!;
+      await session.transport.close().catch(() => {});
+      sessions.delete(sessionId);
+      console.log(`[session] deleted ${sessionId}`);
+    }
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // ── GET  →  re-attach to existing SSE stream only ────────────────────────────
+  //
+  // Do NOT return a discovery blob here — Cursor and other clients interpret
+  // any non-error GET response as "the server replied" and never POST to init.
+  if (req.method === 'GET') {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    if (sessionId && sessions.has(sessionId)) {
+      const session = sessions.get(sessionId)!;
+      session.lastSeen = Date.now();
+      await safeHandleRequest(session.transport, req, res);
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'No active session. POST to this endpoint to initialise.',
+        usage: 'POST /{API_KEY}/mcp',
+      })
+    );
+    return;
+  }
+
+  // ── POST  →  main MCP messages ────────────────────────────────────────────────
+  if (req.method === 'POST') {
+    // Read body
+    let rawBody: string;
+    try {
+      rawBody = await readBody(req);
+    } catch (err) {
+      console.error('[http] failed to read body:', err);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to read request body' }));
+      return;
+    }
+
+    // FIX: Use safeJsonParse so a truncated / empty body never throws
+    // SyntaxError up through the stack and crashes the server.
+    const parsed = safeJsonParse(rawBody);
+    if (!parsed.ok) {
+      console.error('[http] invalid JSON body (first 200 chars):', rawBody.slice(0, 200));
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
+      return;
+    }
+    const parsedBody = parsed.value;
+
+    // Route to an existing session if the client sent a session ID
+    const incomingSessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    if (incomingSessionId && sessions.has(incomingSessionId)) {
+      const session = sessions.get(incomingSessionId)!;
+      session.lastSeen = Date.now();
+      await safeHandleRequest(session.transport, req, res, parsedBody);
+      return;
+    }
+
+    // ── New session ─────────────────────────────────────────────────────────
+    const sessionId = randomUUID();
+    console.log(`[session] created ${sessionId}`);
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => sessionId,
+    });
+
+    const server = createMcpServer(apiKey, BASE_URL);
+
+    try {
+      await server.connect(transport);
+    } catch (err) {
+      console.error('[session] connect error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to initialise MCP session' }));
+      return;
+    }
+
+    const session: Session = { transport, server, lastSeen: Date.now() };
+    sessions.set(sessionId, session);
+
+    transport.onclose = () => {
+      sessions.delete(sessionId);
+      console.log(`[session] closed ${sessionId}`);
+    };
+
+    await safeHandleRequest(transport, req, res, parsedBody);
+    return;
+  }
+
+  // ── Unsupported method ────────────────────────────────────────────────────────
+  res.writeHead(405, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Method not allowed' }));
 }
