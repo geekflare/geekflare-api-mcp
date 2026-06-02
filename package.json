@@ -16,7 +16,10 @@
     "start": "node build/index.js",
     "dev": "ts-node src/index.ts",
     "test": "tsx test.ts",
-    "prepublishOnly": "npm test && npm run build"
+    "prepublishOnly": "npm test && npm run build",
+    "docker:build": "docker build -t geekflarehq/geekflare-api-mcp:latest .",
+    "docker:push": "docker push geekflarehq/geekflare-api-mcp:latest",
+    "release": "npm test && docker build -t geekflarehq/geekflare-api-mcp:latest . && docker push geekflarehq/geekflare-api-mcp:latest"
   },
   "keywords": [
     "geekflare",

@@ -1,17 +1,4 @@
 node_modules
-src
-.env
-*.log
-generated
-openapi.json
-test.ts
-.gitignore
-.eslintrc.json
-.prettierrc
-jest.config.js
-tsconfig.json
-
-node_modules
 build
 .git
 .github
@@ -19,3 +6,8 @@ build
 .env
 .env.*
 npm-debug.log
+
+generated
+openapi.json
+test.ts
+*.log
