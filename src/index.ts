@@ -410,10 +410,28 @@ function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
       return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
+        console.error(
+          JSON.stringify({
+            tool: name,
+            status: err.response?.status,
+            message: err.message,
+          })
+        );
+
         const msg = JSON.stringify(err.response?.data ?? err.message);
-        return { content: [{ type: 'text', text: `API Error: ${msg}` }], isError: true };
+
+        return {
+          content: [{ type: 'text', text: `API Error: ${msg}` }],
+          isError: true,
+        };
       }
-      return { content: [{ type: 'text', text: `Error: ${String(err)}` }], isError: true };
+
+      console.error(err);
+
+      return {
+        content: [{ type: 'text', text: `Error: ${String(err)}` }],
+        isError: true,
+      };
     }
   });
 
@@ -428,6 +446,23 @@ if (MODE === 'http') {
 
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+
+    if (url.pathname === '/health') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+      });
+
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          service: '@geekflare/mcp',
+          version: '0.1.0',
+          uptime: process.uptime(),
+        })
+      );
+
+      return;
+    }
     const match = url.pathname.match(/^\/([^/]+)\/mcp\/?$/);
 
     if (!match) {
@@ -459,7 +494,14 @@ if (MODE === 'http') {
   });
 
   httpServer.listen(PORT, () => {
-    console.error(`Geekflare MCP server running at http://localhost:${PORT}/{API_KEY}/mcp`);
+    console.log('=================================');
+    console.log('Geekflare MCP Server Started');
+    console.log(`Port: ${PORT}`);
+    console.log(`Base URL: ${BASE_URL}`);
+    console.log(`Mode: ${MODE}`);
+    console.log(`Health: http://localhost:${PORT}/health`);
+    console.log(`MCP: http://localhost:${PORT}/{API_KEY}/mcp`);
+    console.log('=================================');
   });
 } else {
   const apiKey = process.env.API_KEY ?? '';
