@@ -1,450 +1,365 @@
+#!/usr/bin/env node
 import 'dotenv/config';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import axios from 'axios';
+import http from 'http';
 
-const API_KEY = process.env.API_KEY ?? '';
-const BASE_URL = (process.env.API_BASE_URL ?? 'https://api.geekflare.com').replace(/\/$/, '');
+const DEFAULT_BASE_URL = 'https://api.geekflare.com';
 
-const client = axios.create({
-  baseURL: BASE_URL,
-  headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json' },
-});
-
-async function call(path: string, body: unknown) {
-  const res = await client.post(path, body);
-  return res.data;
-}
-
-const server = new Server(
-  { name: '@geekflare/mcp', version: '0.2.0' },
-  { capabilities: { tools: {} } }
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: 'webScrape',
-      description:
-        'Scrape full page content from a URL. Returns HTML, Markdown, JSON, or LLM-optimised text.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
-          format: {
-            type: 'array',
-            items: {
-              type: 'string',
-              enum: ['html', 'markdown', 'json', 'markdown-llm', 'html-llm', 'text', 'text-llm'],
-            },
-            default: ['markdown'],
-            description:
-              'Output formats (up to 3). Use markdown-llm or text-llm for LLM-ready content.',
-          },
-          proxyCountry: {
+const TOOLS = [
+  {
+    name: 'webScrape',
+    description: 'Scrape a webpage with custom options',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
+        format: {
+          type: 'array',
+          items: {
             type: 'string',
-            description: 'Route request through a specific country ISO code (e.g. "us", "gb").',
+            enum: ['html', 'markdown', 'json', 'markdown-llm', 'html-llm', 'text', 'text-llm'],
           },
-          renderJS: {
-            type: 'boolean',
-            default: true,
-            description: 'Execute JavaScript before extracting. Keep true for dynamic sites.',
-          },
-          fileOutput: {
-            type: 'boolean',
-            default: false,
-            description: 'Return a download URL instead of inline content.',
-          },
-          blockAds: { type: 'boolean', default: true },
-          stealth: {
-            type: 'boolean',
-            default: false,
-            description: 'Enable stealth mode to bypass CAPTCHAs. Slower.',
-          },
+          default: ['markdown'],
+          description: 'Output format(s). Up to 3.',
         },
-        required: ['url'],
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        renderJS: {
+          type: 'boolean',
+          default: true,
+          description: 'Execute JavaScript before extracting',
+        },
+        fileOutput: {
+          type: 'boolean',
+          default: false,
+          description: 'Return a download URL instead of inline data',
+        },
+        blockAds: { type: 'boolean', default: true },
+        stealth: { type: 'boolean', default: false, description: 'Bypass CAPTCHAs (slower)' },
       },
+      required: ['url'],
     },
-    {
-      name: 'metaScrape',
-      description:
-        'Scrape meta tags (title, description, Open Graph, Twitter cards, etc.) from a URL.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
-          format: { type: 'string', enum: ['json', 'markdown'], default: 'json' },
-          proxyCountry: {
+  },
+  {
+    name: 'metaScrape',
+    description: 'Scrape meta tags from a URL',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
+        renderJS: { type: 'boolean', default: true },
+        format: { type: 'string', enum: ['markdown', 'json'], default: 'json' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        fileOutput: { type: 'boolean', default: false },
+        blockAds: { type: 'boolean', default: true },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'screenshot',
+    description: 'Capture a screenshot of a website',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
+        type: { type: 'string', enum: ['png', 'jpeg', 'webp'], default: 'png' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        fullPage: { type: 'boolean', default: false },
+        blockAds: { type: 'boolean', default: true },
+        hideCookie: { type: 'boolean', default: true, description: 'Hide cookie consent banners' },
+        skipCaptcha: { type: 'boolean', default: true },
+        addTimestamp: { type: 'boolean', default: false },
+        highlightLinks: {
+          type: 'boolean',
+          default: false,
+          description: 'Draw borders around links (useful for AI vision)',
+        },
+        pageHeight: { type: 'number', description: 'Height of page for partial screenshot' },
+        viewportWidth: { type: 'number', description: 'Viewport width' },
+        viewportHeight: { type: 'number', description: 'Viewport height' },
+        delay: { type: 'number', description: 'Seconds to wait before screenshot' },
+        quality: { type: 'number', default: 90, description: 'Image quality for JPEG/WEBP' },
+        scaleFactor: { type: 'number', description: 'Device pixel ratio' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'search',
+    description: 'Search the web and return clean results in JSON, Markdown, or HTML',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', default: 10, description: 'Number of results' },
+        time: { type: 'string', description: 'Time filter: any, d, w, m, y, d7, h6 etc.' },
+        location: { type: 'string', description: 'Country code (ISO alpha-2)' },
+        source: { type: 'string', enum: ['web', 'news', 'images'], default: 'web' },
+        category: { type: 'string', enum: ['general', 'code', 'research'], default: 'general' },
+        format: { type: 'string', enum: ['json', 'markdown', 'html'], default: 'json' },
+        includeDomains: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Only include these domains',
+        },
+        excludeDomains: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Exclude these domains',
+        },
+        groundedAnswer: {
+          type: 'boolean',
+          default: false,
+          description: 'Generate AI-grounded answer from results',
+        },
+        scrape: { type: 'boolean', default: false, description: 'Scrape content from result URLs' },
+        scrapeLimit: { type: 'number', default: 3, description: 'Number of URLs to scrape' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'dnsRecord',
+    description: 'Retrieve DNS records for a domain',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        types: {
+          type: 'array',
+          items: {
             type: 'string',
-            description: 'Route request through a specific country ISO code.',
+            enum: ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'SOA', 'TXT', 'CAA', 'SRV'],
           },
-          renderJS: { type: 'boolean', default: true },
-          fileOutput: {
-            type: 'boolean',
-            default: false,
-            description: 'Return a download URL instead of inline content.',
-          },
-          blockAds: { type: 'boolean', default: true },
+          default: ['A', 'AAAA', 'CNAME', 'MX', 'CAA', 'NS', 'SOA', 'SRV', 'TXT'],
         },
-        required: ['url'],
       },
+      required: ['url'],
     },
-    {
-      name: 'screenshot',
-      description:
-        'Capture a screenshot of a website. Supports full-page, device emulation, and ad/cookie blocking.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
-          type: { type: 'string', enum: ['png', 'jpeg', 'webp'], default: 'png' },
-          proxyCountry: {
-            type: 'string',
-            description: 'Route browser through a specific country ISO code.',
-          },
-          fullPage: { type: 'boolean', default: false },
-          blockAds: { type: 'boolean', default: true },
-          hideCookie: {
-            type: 'boolean',
-            default: true,
-            description: 'Remove cookie consent banners before capturing.',
-          },
-          skipCaptcha: {
-            type: 'boolean',
-            default: true,
-            description: 'Attempt to bypass Cloudflare / reCAPTCHA.',
-          },
-          addTimestamp: { type: 'boolean', default: false },
-          highlightLinks: {
-            type: 'boolean',
-            default: false,
-            description:
-              'Draw borders around clickable links and inputs. Useful for AI vision models.',
-          },
-          pageHeight: { type: 'number', description: 'Custom page height in pixels.' },
-          viewportWidth: {
-            type: 'number',
-            description: 'Viewport width in pixels (default 1366).',
-          },
-          viewportHeight: {
-            type: 'number',
-            description: 'Viewport height in pixels (default 768).',
-          },
-          delay: {
-            type: 'number',
-            description: 'Seconds to wait after page load before capturing.',
-          },
-          quality: { type: 'number', default: 90, description: 'Image quality (1–100).' },
-          scaleFactor: {
-            type: 'number',
-            description: 'Device pixel ratio. Use 2–3 for Retina-quality output.',
-          },
+  },
+  {
+    name: 'siteStatus',
+    description: 'Check if a site is up or down',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'redirectCheck',
+    description: 'Check the redirect chain of a URL',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'brokenLink',
+    description: 'Find broken links on a webpage',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'url2Pdf',
+    description: 'Convert a URL to PDF',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
+        format: {
+          type: 'string',
+          enum: ['letter', 'legal', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
+          default: 'a4',
         },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'search',
-      description:
-        'Search the web and return clean results. Supports web, news, and image search with optional AI-grounded answers.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Search query' },
-          limit: { type: 'number', default: 10, description: 'Number of results to return.' },
-          time: { type: 'string', description: 'Time filter: any, d, w, m, y, d7, h6' },
-          location: { type: 'string', description: 'Country ISO code to localise results.' },
-          source: { type: 'string', enum: ['web', 'news', 'images'], default: 'web' },
-          category: {
-            type: 'string',
-            enum: ['general', 'code', 'research'],
-            description: 'Search category.',
-          },
-          format: { type: 'string', enum: ['json', 'markdown', 'html'], default: 'json' },
-          includeDomains: {
-            type: 'string',
-            description:
-              'Comma-separated domains to include (e.g. "reddit.com,stackoverflow.com").',
-          },
-          excludeDomains: {
-            type: 'string',
-            description: 'Comma-separated domains to exclude (e.g. "pinterest.com").',
-          },
-          groundedAnswer: {
-            type: 'boolean',
-            default: false,
-            description: 'Generate an AI-grounded answer synthesised from search results.',
-          },
-          scrape: { type: 'boolean', description: 'Also scrape the top result pages.' },
-          scrapeLimit: {
-            type: 'number',
-            description: 'Number of result pages to scrape (requires scrape: true).',
+        orientation: { type: 'string', enum: ['portrait', 'landscape'], default: 'portrait' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        scale: { type: 'number', description: 'Zoom level (0–2)' },
+        margin: {
+          type: 'object',
+          properties: {
+            top: { type: 'number' },
+            bottom: { type: 'number' },
+            left: { type: 'number' },
+            right: { type: 'number' },
           },
         },
-        required: ['query'],
+        hideCookie: { type: 'boolean', default: true },
+        skipCaptcha: { type: 'boolean', default: true },
+        addTimestamp: { type: 'boolean', default: false },
       },
+      required: ['url'],
     },
-    {
-      name: 'dnsRecord',
-      description: 'Look up DNS records for a domain.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          types: {
-            type: 'array',
-            items: {
-              type: 'string',
-              enum: ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'SOA', 'TXT', 'CAA', 'SRV'],
-            },
-            default: ['A', 'AAAA', 'CNAME', 'MX', 'CAA', 'NS', 'SOA', 'SRV', 'TXT'],
-          },
+  },
+  {
+    name: 'openPorts',
+    description: 'Scan open ports on a host',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        topPorts: {
+          type: 'number',
+          enum: [50, 100, 500, 1000, 5000],
+          description: 'Scan top N ports',
         },
-        required: ['url'],
+        portRanges: { type: 'string', description: 'Custom port ranges e.g. 80,443,1000-1010' },
       },
+      required: ['url'],
     },
-    {
-      name: 'siteStatus',
-      description: 'Check if a site is up or down.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: { type: 'string', description: 'Check from a specific country ISO code.' },
-          followRedirect: { type: 'boolean', default: false },
+  },
+  {
+    name: 'tlsScan',
+    description: 'Scan TLS/SSL configuration of a domain',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'loadTime',
+    description: 'Measure page load time for a URL',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'ttfb',
+    description: 'Measure Time To First Byte (TTFB) for a URL',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'httpHeader',
+    description: 'Fetch HTTP response headers for a URL',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'httpProtocol',
+    description: 'Detect HTTP protocol versions supported by a URL',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'mixedContent',
+    description: 'Check for mixed content issues on a site',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'dnsSec',
+    description: 'Check if DNSSEC is enabled for a domain',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'mtr',
+    description: 'Perform MTR network diagnostic test',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'ping',
+    description: 'Ping a host',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL or IP' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'lighthouse',
+    description: 'Run Lighthouse audit on a website',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL' },
+        device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
+        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        followRedirect: { type: 'boolean', default: false },
+        parameters: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Extra Lighthouse CLI parameters',
         },
-        required: ['url'],
       },
+      required: ['url'],
     },
-    {
-      name: 'redirectCheck',
-      description: 'Check the full redirect chain of a URL.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: { type: 'string', description: 'Check from a specific country ISO code.' },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'brokenLink',
-      description: 'Find all broken links on a webpage.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: { type: 'string', description: 'Check from a specific country ISO code.' },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'url2Pdf',
-      description: 'Convert a URL to a PDF file.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
-          format: {
-            type: 'string',
-            enum: ['letter', 'legal', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
-            default: 'a4',
-          },
-          orientation: { type: 'string', enum: ['portrait', 'landscape'], default: 'portrait' },
-          proxyCountry: {
-            type: 'string',
-            description: 'Route browser through a specific country ISO code.',
-          },
-          scale: {
-            type: 'number',
-            description: 'Zoom level before rendering (e.g. 0.8 to shrink, 1.2 to zoom in).',
-          },
-          'margin.top': { type: 'number', description: 'Top margin in mm (default 25).' },
-          'margin.bottom': { type: 'number', description: 'Bottom margin in mm (default 25).' },
-          'margin.left': { type: 'number', description: 'Left margin in mm (default 25).' },
-          'margin.right': { type: 'number', description: 'Right margin in mm (default 25).' },
-          hideCookie: {
-            type: 'boolean',
-            default: true,
-            description: 'Remove cookie consent banners before generating PDF.',
-          },
-          skipCaptcha: {
-            type: 'boolean',
-            default: true,
-            description: 'Attempt to bypass anti-bot challenges before generating PDF.',
-          },
-          addTimestamp: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'openPorts',
-      description: 'Scan open ports on a host.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL or hostname' },
-          topPorts: {
-            type: 'number',
-            enum: [50, 100, 500, 1000, 5000],
-            description: 'Scan the top N most common ports.',
-          },
-          portRanges: {
-            type: 'string',
-            description: 'Custom port ranges (e.g. "80,443,1000-1010").',
-          },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'tlsScan',
-      description: 'Scan the TLS/SSL configuration of a domain.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'loadTime',
-      description: 'Measure the full page load time for a URL.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: {
-            type: 'string',
-            description: 'Measure load time from a specific country ISO code.',
-          },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'ttfb',
-      description: 'Measure Time To First Byte (TTFB) for a URL.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'httpHeader',
-      description: 'Retrieve HTTP response headers for a URL.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: { type: 'string', description: 'Fetch from a specific country ISO code.' },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'httpProtocol',
-      description: 'Check which HTTP protocols (HTTP/1.1, HTTP/2, HTTP/3) a URL supports.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'mixedContent',
-      description: 'Check for mixed content (HTTP resources on HTTPS pages) issues.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: { type: 'string', description: 'Check from a specific country ISO code.' },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'dnsSec',
-      description: 'Check if DNSSEC is enabled and valid for a domain.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'mtr',
-      description: 'Perform an MTR (My Traceroute) network diagnostic test.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          proxyCountry: {
-            type: 'string',
-            description: 'Run diagnostic from a specific country ISO code.',
-          },
-          followRedirect: { type: 'boolean', default: false },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'ping',
-      description: 'Ping a host and return latency results.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL or IP address' },
-        },
-        required: ['url'],
-      },
-    },
-    {
-      name: 'lighthouse',
-      description:
-        'Run a Lighthouse audit (performance, SEO, accessibility, best practices) on a website.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'Target URL' },
-          device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
-          proxyCountry: {
-            type: 'string',
-            description: 'Run audit from a specific country ISO code.',
-          },
-          followRedirect: { type: 'boolean', default: false },
-          parameters: {
-            type: 'string',
-            description: 'Extra Lighthouse CLI flags (e.g. "--only-categories=seo").',
-          },
-        },
-        required: ['url'],
-      },
-    },
-  ],
-}));
+  },
+];
 
 const ROUTES: Record<string, string> = {
   webScrape: '/webscraping',
@@ -469,25 +384,87 @@ const ROUTES: Record<string, string> = {
   lighthouse: '/lighthouse',
 };
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const route = ROUTES[name];
+function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
+  const httpClient = axios.create({
+    baseURL: baseUrl.replace(/\/$/, ''),
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+  });
 
-  if (!route) {
-    return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
-  }
+  const server = new Server(
+    { name: '@geekflare/mcp', version: '0.1.0' },
+    { capabilities: { tools: {} } }
+  );
 
-  try {
-    const data = await call(route, args);
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  } catch (err: unknown) {
-    if (axios.isAxiosError(err)) {
-      const msg = JSON.stringify(err.response?.data ?? err.message);
-      return { content: [{ type: 'text', text: `API Error: ${msg}` }], isError: true };
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const route = ROUTES[name];
+
+    if (!route) {
+      return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     }
-    return { content: [{ type: 'text', text: `Error: ${String(err)}` }], isError: true };
-  }
-});
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+    try {
+      const res = await httpClient.post(route, args);
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        const msg = JSON.stringify(err.response?.data ?? err.message);
+        return { content: [{ type: 'text', text: `API Error: ${msg}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: `Error: ${String(err)}` }], isError: true };
+    }
+  });
+
+  return server;
+}
+
+const MODE = process.env.MCP_TRANSPORT ?? 'stdio';
+
+if (MODE === 'http') {
+  const PORT = parseInt(process.env.PORT ?? '3000', 10);
+  const BASE_URL = (process.env.API_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
+
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+    const match = url.pathname.match(/^\/([^/]+)\/mcp\/?$/);
+
+    if (!match) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found. Use /{API_KEY}/mcp' }));
+      return;
+    }
+
+    const apiKey = match[1];
+
+    if (!apiKey) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'API key required' }));
+      return;
+    }
+
+    const server = createServer(apiKey, BASE_URL);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    await server.connect(transport);
+
+    const body: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => body.push(chunk));
+    req.on('end', async () => {
+      await transport.handleRequest(req, res, JSON.parse(Buffer.concat(body).toString()));
+    });
+  });
+
+  httpServer.listen(PORT, () => {
+    console.error(`Geekflare MCP server running at http://localhost:${PORT}/{API_KEY}/mcp`);
+  });
+} else {
+  const apiKey = process.env.API_KEY ?? '';
+  const baseUrl = process.env.API_BASE_URL ?? DEFAULT_BASE_URL;
+  const server = createServer(apiKey, baseUrl);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
