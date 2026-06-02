@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   mcp:
-    image: geekflare/mcp:latest
+    image: geekflare-api/mcp:latest
     restart: always
     environment:
       MCP_TRANSPORT: http
