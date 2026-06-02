@@ -391,12 +391,12 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   const httpClient = axios.create({
     baseURL: baseUrl.replace(/\/$/, ''),
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-    // Long-running tools (lighthouse, brokenLink, openPorts) can take a while
-    timeout: 120_000,
+    // Long-running tools (lighthouse, brokenLink, openPorts) can take a while.
+    timeout: 150_000,
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.3.1' },
+    { name: '@geekflare/mcp', version: '0.3.2' },
     { capabilities: { tools: {} } }
   );
 
@@ -454,7 +454,10 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-/** Set CORS + common headers. Handles pre-flight OPTIONS. Returns true if caller should stop. */
+/**
+ * Set CORS + common headers. Handles pre-flight OPTIONS.
+ * Returns true if caller should stop processing.
+ */
 function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -505,20 +508,20 @@ if (MODE === 'http') {
   const BASE_URL = (process.env.API_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
 
   const httpServer = http.createServer(async (req, res) => {
-    // Handle CORS pre-flight first
+    // ── CORS pre-flight ───────────────────────────────────────────────────────
     if (setCorsHeaders(req, res)) return;
 
     const rawUrl = req.url ?? '/';
     const url = new URL(rawUrl, `http://localhost:${PORT}`);
 
-    // ── /health ──────────────────────────────────────────────────────────────
+    // ── /health ───────────────────────────────────────────────────────────────
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           status: 'ok',
           service: '@geekflare/mcp',
-          version: '0.3.1',
+          version: '0.3.2',
           uptime: process.uptime(),
           sessions: sessions.size,
         })
@@ -542,7 +545,7 @@ if (MODE === 'http') {
       return;
     }
 
-    // ── DELETE  →  terminate session ─────────────────────────────────────────
+    // ── DELETE  →  terminate session ──────────────────────────────────────────
     if (req.method === 'DELETE') {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       if (sessionId && sessions.has(sessionId)) {
@@ -556,26 +559,36 @@ if (MODE === 'http') {
       return;
     }
 
-    // ── GET  →  SSE stream (re-attach or info) ────────────────────────────────
+    // ── GET  →  re-attach to existing SSE stream only ─────────────────────────
+    //
+    // FIX: Do NOT return a discovery blob for unknown sessions. Clients like
+    // Cursor send GET to re-attach to an SSE stream; if there is no session,
+    // return 404 so the client falls through to POST for initialisation.
+    // Returning a JSON blob here caused Cursor to think there were "no tools".
     if (req.method === 'GET') {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
       if (sessionId && sessions.has(sessionId)) {
-        // Re-attach to an existing session's SSE stream
         const session = sessions.get(sessionId)!;
         session.lastSeen = Date.now();
-        await session.transport.handleRequest(req, res);
+        try {
+          await session.transport.handleRequest(req, res);
+        } catch (err) {
+          console.error('[transport] GET handleRequest error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+        }
         return;
       }
 
-      // No session yet — return a friendly discovery response
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      // No matching session — tell the client to POST instead.
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
-          name: '@geekflare/mcp',
-          version: '0.3.1',
-          protocol: 'MCP Streamable HTTP',
-          usage: 'POST /{API_KEY}/mcp to start a session',
+          error: 'No active session. POST to this endpoint to initialise.',
+          usage: 'POST /{API_KEY}/mcp',
         })
       );
       return;
@@ -601,18 +614,25 @@ if (MODE === 'http') {
         return;
       }
 
-      // Check for an existing session
+      // Route to an existing session if the client sent a session ID
       const incomingSessionId = req.headers['mcp-session-id'] as string | undefined;
 
       if (incomingSessionId && sessions.has(incomingSessionId)) {
-        // Route to existing session
         const session = sessions.get(incomingSessionId)!;
         session.lastSeen = Date.now();
-        await session.transport.handleRequest(req, res, parsedBody);
+        try {
+          await session.transport.handleRequest(req, res, parsedBody);
+        } catch (err) {
+          console.error('[transport] POST (existing session) handleRequest error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+          }
+        }
         return;
       }
 
-      // New session
+      // ── New session ───────────────────────────────────────────────────────
       const sessionId = randomUUID();
       console.log(`[session] created ${sessionId}`);
 
@@ -621,7 +641,15 @@ if (MODE === 'http') {
       });
 
       const server = createMcpServer(apiKey, BASE_URL);
-      await server.connect(transport);
+
+      try {
+        await server.connect(transport);
+      } catch (err) {
+        console.error('[session] connect error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to initialise MCP session' }));
+        return;
+      }
 
       const session: Session = { transport, server, lastSeen: Date.now() };
       sessions.set(sessionId, session);
@@ -632,7 +660,16 @@ if (MODE === 'http') {
         console.log(`[session] closed ${sessionId}`);
       };
 
-      await transport.handleRequest(req, res, parsedBody);
+      try {
+        await transport.handleRequest(req, res, parsedBody);
+      } catch (err) {
+        console.error('[transport] POST (new session) handleRequest error:', err);
+        sessions.delete(sessionId);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+      }
       return;
     }
 
@@ -648,16 +685,34 @@ if (MODE === 'http') {
   httpServer.listen(PORT, () => {
     console.log('=================================');
     console.log('Geekflare MCP Server Started');
-    console.log(`Port:    ${PORT}`);
+    console.log(`Port:     ${PORT}`);
     console.log(`Base URL: ${BASE_URL}`);
-    console.log(`Mode:    ${MODE}`);
-    console.log(`Health:  http://localhost:${PORT}/health`);
-    console.log(`MCP:     http://localhost:${PORT}/{API_KEY}/mcp`);
+    console.log(`Mode:     ${MODE}`);
+    console.log(`Health:   http://localhost:${PORT}/health`);
+    console.log(`MCP:      http://localhost:${PORT}/{API_KEY}/mcp`);
     console.log('=================================');
   });
 } else {
-  // ── stdio mode ──────────────────────────────────────────────────────────────
+  // ── stdio mode (Claude Desktop, local npm usage) ──────────────────────────
+  //
+  // Claude Desktop does NOT support API-key-in-URL auth for remote HTTP MCP
+  // servers — it expects OAuth. Use stdio mode locally instead:
+  //
+  //   {
+  //     "mcpServers": {
+  //       "geekflare": {
+  //         "command": "npx",
+  //         "args": ["-y", "@geekflare/mcp"],
+  //         "env": { "API_KEY": "<your-key>" }
+  //       }
+  //     }
+  //   }
+  //
   const apiKey = process.env.API_KEY ?? '';
+  if (!apiKey) {
+    console.error('[stdio] ERROR: API_KEY environment variable is not set.');
+    process.exit(1);
+  }
   const baseUrl = process.env.API_BASE_URL ?? DEFAULT_BASE_URL;
   const server = createMcpServer(apiKey, baseUrl);
   const transport = new StdioServerTransport();
