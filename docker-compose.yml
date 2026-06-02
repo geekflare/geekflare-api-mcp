@@ -2,11 +2,19 @@ version: '3.8'
 
 services:
   mcp:
-    image: geekflarehq/geekflare-api-mcp:latest
+    # image: geekflarehq/geekflare-api-mcp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: geekflare-mcp
+
     restart: always
+
     environment:
       MCP_TRANSPORT: http
       API_BASE_URL: ${API_BASE_URL:-https://api.geekflare.com}
-      PORT: ${PORT:-3000}
+      PORT: ${PORT:-5000}
+
     ports:
-      - '${PORT:-3000}:${PORT:-3000}'
+      - '${PORT:-5000}:${PORT:-5000}'

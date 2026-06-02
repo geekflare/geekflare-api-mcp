@@ -1,3 +1,21 @@
+# ==========================
+# Builder
+# ==========================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY src ./src
+
+RUN npm run build
+
+# ==========================
+# Runtime
+# ==========================
 FROM node:20-alpine
 
 WORKDIR /app
@@ -5,7 +23,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-COPY build/ ./build/
+COPY --from=builder /app/build ./build
 
 ENV MCP_TRANSPORT=""
 ENV API_KEY=""
@@ -14,4 +32,4 @@ ENV PORT="3000"
 
 EXPOSE 3000
 
-ENTRYPOINT ["node", "build/index.js"]
+CMD ["node", "build/index.js"]
