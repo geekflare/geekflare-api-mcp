@@ -391,7 +391,7 @@ function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.1.0' },
+    { name: '@geekflare/mcp', version: '0.3.1' },
     { capabilities: { tools: {} } }
   );
 
@@ -456,7 +456,7 @@ if (MODE === 'http') {
         JSON.stringify({
           status: 'ok',
           service: '@geekflare/mcp',
-          version: '0.1.0',
+          version: '0.3.1',
           uptime: process.uptime(),
         })
       );
