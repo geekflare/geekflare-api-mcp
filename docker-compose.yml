@@ -1,4 +1,5 @@
 version: '3.8'
+
 services:
   mcp:
     image: geekflarehq/geekflare-api-mcp:latest
@@ -6,6 +7,6 @@ services:
     environment:
       MCP_TRANSPORT: http
       API_BASE_URL: ${API_BASE_URL:-https://api.geekflare.com}
-      PORT: 3000
+      PORT: ${PORT:-3000}
     ports:
-      - '3000:3000'
+      - '${PORT:-3000}:${PORT:-3000}'
