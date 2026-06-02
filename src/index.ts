@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import axios from 'axios';
 import http from 'http';
+import { randomUUID } from 'crypto';
 
 const DEFAULT_BASE_URL = 'https://api.geekflare.com';
 
@@ -384,10 +385,14 @@ const ROUTES: Record<string, string> = {
   lighthouse: '/lighthouse',
 };
 
-function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
+// ─── MCP Server factory ───────────────────────────────────────────────────────
+
+function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Server {
   const httpClient = axios.create({
     baseURL: baseUrl.replace(/\/$/, ''),
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+    // Long-running tools (lighthouse, brokenLink, openPorts) can take a while
+    timeout: 120_000,
   });
 
   const server = new Server(
@@ -402,11 +407,14 @@ function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
     const route = ROUTES[name];
 
     if (!route) {
-      return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+      return {
+        content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+        isError: true,
+      };
     }
 
     try {
-      const res = await httpClient.post(route, args);
+      const res = await httpClient.post(route, args ?? {});
       return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
@@ -417,17 +425,13 @@ function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
             message: err.message,
           })
         );
-
         const msg = JSON.stringify(err.response?.data ?? err.message);
-
         return {
           content: [{ type: 'text', text: `API Error: ${msg}` }],
           isError: true,
         };
       }
-
       console.error(err);
-
       return {
         content: [{ type: 'text', text: `Error: ${String(err)}` }],
         isError: true,
@@ -438,6 +442,62 @@ function createServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL) {
   return server;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Read the full request body as a string. */
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+/** Set CORS + common headers. Handles pre-flight OPTIONS. Returns true if caller should stop. */
+function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, mcp-session-id, x-api-key'
+  );
+  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+  return false;
+}
+
+// ─── Session store ────────────────────────────────────────────────────────────
+
+interface Session {
+  transport: StreamableHTTPServerTransport;
+  server: Server;
+  lastSeen: number;
+}
+
+const sessions = new Map<string, Session>();
+
+/** Remove sessions idle for more than 30 minutes. */
+function pruneSessions() {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, session] of sessions) {
+    if (session.lastSeen < cutoff) {
+      session.transport.close().catch(() => {});
+      sessions.delete(id);
+      console.log(`[session] pruned ${id}`);
+    }
+  }
+}
+
+setInterval(pruneSessions, 5 * 60 * 1000).unref();
+
+// ─── HTTP mode ────────────────────────────────────────────────────────────────
+
 const MODE = process.env.MCP_TRANSPORT ?? 'stdio';
 
 if (MODE === 'http') {
@@ -445,24 +505,28 @@ if (MODE === 'http') {
   const BASE_URL = (process.env.API_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
 
   const httpServer = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+    // Handle CORS pre-flight first
+    if (setCorsHeaders(req, res)) return;
 
+    const rawUrl = req.url ?? '/';
+    const url = new URL(rawUrl, `http://localhost:${PORT}`);
+
+    // ── /health ──────────────────────────────────────────────────────────────
     if (url.pathname === '/health') {
-      res.writeHead(200, {
-        'Content-Type': 'application/json',
-      });
-
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           status: 'ok',
           service: '@geekflare/mcp',
           version: '0.3.1',
           uptime: process.uptime(),
+          sessions: sessions.size,
         })
       );
-
       return;
     }
+
+    // ── /{API_KEY}/mcp ────────────────────────────────────────────────────────
     const match = url.pathname.match(/^\/([^/]+)\/mcp\/?$/);
 
     if (!match) {
@@ -472,41 +536,130 @@ if (MODE === 'http') {
     }
 
     const apiKey = match[1];
-
     if (!apiKey) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'API key required' }));
       return;
     }
 
-    const server = createServer(apiKey, BASE_URL);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
+    // ── DELETE  →  terminate session ─────────────────────────────────────────
+    if (req.method === 'DELETE') {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      if (sessionId && sessions.has(sessionId)) {
+        const session = sessions.get(sessionId)!;
+        await session.transport.close().catch(() => {});
+        sessions.delete(sessionId);
+        console.log(`[session] deleted ${sessionId}`);
+      }
+      res.writeHead(204);
+      res.end();
+      return;
+    }
 
-    await server.connect(transport);
+    // ── GET  →  SSE stream (re-attach or info) ────────────────────────────────
+    if (req.method === 'GET') {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    const body: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => body.push(chunk));
-    req.on('end', async () => {
-      await transport.handleRequest(req, res, JSON.parse(Buffer.concat(body).toString()));
-    });
+      if (sessionId && sessions.has(sessionId)) {
+        // Re-attach to an existing session's SSE stream
+        const session = sessions.get(sessionId)!;
+        session.lastSeen = Date.now();
+        await session.transport.handleRequest(req, res);
+        return;
+      }
+
+      // No session yet — return a friendly discovery response
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          name: '@geekflare/mcp',
+          version: '0.3.1',
+          protocol: 'MCP Streamable HTTP',
+          usage: 'POST /{API_KEY}/mcp to start a session',
+        })
+      );
+      return;
+    }
+
+    // ── POST  →  main MCP messages ────────────────────────────────────────────
+    if (req.method === 'POST') {
+      let body: string;
+      try {
+        body = await readBody(req);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to read request body' }));
+        return;
+      }
+
+      let parsedBody: unknown;
+      try {
+        parsedBody = body.trim() ? JSON.parse(body) : {};
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
+        return;
+      }
+
+      // Check for an existing session
+      const incomingSessionId = req.headers['mcp-session-id'] as string | undefined;
+
+      if (incomingSessionId && sessions.has(incomingSessionId)) {
+        // Route to existing session
+        const session = sessions.get(incomingSessionId)!;
+        session.lastSeen = Date.now();
+        await session.transport.handleRequest(req, res, parsedBody);
+        return;
+      }
+
+      // New session
+      const sessionId = randomUUID();
+      console.log(`[session] created ${sessionId}`);
+
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => sessionId,
+      });
+
+      const server = createMcpServer(apiKey, BASE_URL);
+      await server.connect(transport);
+
+      const session: Session = { transport, server, lastSeen: Date.now() };
+      sessions.set(sessionId, session);
+
+      // Clean up when the transport closes
+      transport.onclose = () => {
+        sessions.delete(sessionId);
+        console.log(`[session] closed ${sessionId}`);
+      };
+
+      await transport.handleRequest(req, res, parsedBody);
+      return;
+    }
+
+    // ── Unsupported method ────────────────────────────────────────────────────
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+  });
+
+  httpServer.on('error', (err) => {
+    console.error('[server] error:', err);
   });
 
   httpServer.listen(PORT, () => {
     console.log('=================================');
     console.log('Geekflare MCP Server Started');
-    console.log(`Port: ${PORT}`);
+    console.log(`Port:    ${PORT}`);
     console.log(`Base URL: ${BASE_URL}`);
-    console.log(`Mode: ${MODE}`);
-    console.log(`Health: http://localhost:${PORT}/health`);
-    console.log(`MCP: http://localhost:${PORT}/{API_KEY}/mcp`);
+    console.log(`Mode:    ${MODE}`);
+    console.log(`Health:  http://localhost:${PORT}/health`);
+    console.log(`MCP:     http://localhost:${PORT}/{API_KEY}/mcp`);
     console.log('=================================');
   });
 } else {
+  // ── stdio mode ──────────────────────────────────────────────────────────────
   const apiKey = process.env.API_KEY ?? '';
   const baseUrl = process.env.API_BASE_URL ?? DEFAULT_BASE_URL;
-  const server = createServer(apiKey, baseUrl);
+  const server = createMcpServer(apiKey, baseUrl);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
