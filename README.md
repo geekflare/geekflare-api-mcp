@@ -1,6 +1,6 @@
 # @geekflare/mcp
 
-Official MCP (Model Context Protocol) server for the [Geekflare API](https://api.geekflare.com). Connect Geekflare's web intelligence tools directly to Claude, Cursor, Windsurf, and other AI assistants.
+Official MCP (Model Context Protocol) server for the [Geekflare API](https://geekflare.com/api/). Connect Geekflare's web intelligence tools directly to Claude, Cursor, Windsurf, and other AI assistants.
 
 ## Setup
 
@@ -345,9 +345,9 @@ Run a full Lighthouse audit — performance, SEO, accessibility, and best practi
 
 ## Links
 
-- [API Documentation](https://api.geekflare.com/auth/swagger-ui)
-- [Geekflare API](https://geekflare.com/api)
-- [Report Issues](https://github.com/geekflare/geekflare-mcp/issues)
+- [API Documentation](https://docs.geekflare.com/api/intro)
+- [Geekflare API](https://dash.geekflare.com/)
+- [Report Issues](https://geekflare.com/contact/?product=api&topic=bug)
 
 ## License
 

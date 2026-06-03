@@ -424,7 +424,7 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.3.3' },
+    { name: '@geekflare/mcp', version: '0.3.4' },
     { capabilities: { tools: {} } }
   );
 
