@@ -33,3 +33,5 @@ ENV PORT="3000"
 EXPOSE 3000
 
 CMD ["node", "build/index.js"]
+
+LABEL io.modelcontextprotocol.server.name="com.geekflare/mcp"
