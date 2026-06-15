@@ -11,6 +11,7 @@
     "build",
     "README.md"
   ],
+  "mcpName": "com.geekflare/mcp",
   "scripts": {
     "build": "tsc && shx chmod 755 build/index.js",
     "start": "node build/index.js",

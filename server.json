@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.geekflare/mcp",
+  "description": "Official MCP server for Geekflare API with scraping, search, screenshots, and monitoring.",
+  "version": "0.3.4",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@geekflare/mcp",
+      "version": "0.3.4",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "API_KEY",
+          "description": "Your Geekflare API key",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "geekflarehq/geekflare-api-mcp",
+      "version": "0.3.4",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "API_KEY",
+          "description": "Your Geekflare API key",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.geekflare.com/{API_KEY}/mcp",
+      "variables": {
+        "API_KEY": {
+          "description": "Your Geekflare API key",
+          "isRequired": true
+        }
+      }
+    }
+  ]
+}
