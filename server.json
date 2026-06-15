@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.geekflare/mcp",
-  "description": "Official MCP server for Geekflare API with scraping, search, screenshots, and monitoring.",
-  "version": "0.3.5",
+  "description": "Geekflare MCP server for scraping, search, screenshots, broken links, DNS lookup, and network tools.",
+  "version": "0.3.6",
   "packages": [
     {
       "registryType": "npm",
