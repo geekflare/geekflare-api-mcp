@@ -96,26 +96,33 @@ Scrape meta tags — title, description, Open Graph, Twitter cards, and more.
 
 ### `screenshot`
 
-Capture a screenshot of any website. Supports full-page, Retina, and AI-friendly link highlighting.
+Capture a screenshot of any website. Supports full-page, element-only, Retina, dark mode, transparent backgrounds, and AI-friendly link highlighting.
 
-| Parameter        | Type                      | Default   | Description                                                    |
-| ---------------- | ------------------------- | --------- | -------------------------------------------------------------- |
-| `url` \*         | string                    | —         | Target URL                                                     |
-| `device`         | `desktop` \| `mobile`     | `desktop` |                                                                |
-| `type`           | `png` \| `jpeg` \| `webp` | `png`     |                                                                |
-| `proxyCountry`   | string                    | —         | Country ISO code                                               |
-| `fullPage`       | boolean                   | `false`   |                                                                |
-| `blockAds`       | boolean                   | `true`    |                                                                |
-| `hideCookie`     | boolean                   | `true`    | Remove cookie banners                                          |
-| `skipCaptcha`    | boolean                   | `true`    | Bypass Cloudflare / reCAPTCHA                                  |
-| `addTimestamp`   | boolean                   | `false`   |                                                                |
-| `highlightLinks` | boolean                   | `false`   | Draw borders around links/buttons — great for AI vision models |
-| `pageHeight`     | number                    | —         | Custom page height (px)                                        |
-| `viewportWidth`  | number                    | —         | Viewport width (px, default 1366)                              |
-| `viewportHeight` | number                    | —         | Viewport height (px, default 768)                              |
-| `delay`          | number                    | —         | Seconds to wait after page load                                |
-| `quality`        | number                    | `90`      | Image quality 1–100                                            |
-| `scaleFactor`    | number                    | —         | Device pixel ratio (use 2–3 for Retina)                        |
+| Parameter               | Type                        | Default   | Description                                                    |
+| ----------------------- | --------------------------- | --------- | -------------------------------------------------------------- |
+| `url` \*                | string                      | —         | Target URL                                                     |
+| `device`                | `desktop` \| `mobile`       | `desktop` |                                                                |
+| `type`                  | `png` \| `jpeg` \| `webp`   | `png`     |                                                                |
+| `proxyCountry`          | string                      | —         | Country ISO code                                               |
+| `fullPage`              | boolean                     | `false`   |                                                                |
+| `selector`              | string                      | —         | CSS selector for the element to capture                        |
+| `fallbackToFullPage`    | boolean                     | `false`   | Fall back to a full-page capture if `selector` isn't found     |
+| `blockAds`              | boolean                     | `true`    |                                                                |
+| `hideCookie`            | boolean                     | `true`    | Remove cookie banners                                          |
+| `skipCaptcha`           | boolean                     | `true`    | Bypass Cloudflare / reCAPTCHA                                  |
+| `addTimestamp`          | boolean                     | `false`   |                                                                |
+| `highlightLinks`        | boolean                     | `false`   | Draw borders around links/buttons — great for AI vision models |
+| `pageHeight`            | number                      | —         | Custom page height (px)                                        |
+| `viewportWidth`         | number                      | —         | Viewport width (px, default 1366)                              |
+| `viewportHeight`        | number                      | —         | Viewport height (px, default 768)                              |
+| `captureBeyondViewport` | boolean                     | —         | Capture content beyond the configured viewport                 |
+| `delay`                 | number                      | —         | Seconds to wait after page load                                |
+| `quality`               | number                      | `90`      | Image quality 1–100                                            |
+| `scaleFactor`           | number                      | —         | Device pixel ratio (use 2–3 for Retina)                        |
+| `theme`                 | `light` \| `dark` \| `auto` | `auto`    | Color scheme                                                   |
+| `removeBackground`      | boolean                     | `false`   | Remove page background (PNG only)                              |
+| `disableAnimations`     | boolean                     | `false`   | Freeze CSS animations before capture                           |
+| `inline`                | boolean                     | `false`   | Return image data inline instead of a CDN URL                  |
 
 ---
 

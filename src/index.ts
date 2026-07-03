@@ -105,11 +105,37 @@ const TOOLS = [
         url: { type: 'string', description: 'Target URL' },
         device: { type: 'string', enum: ['desktop', 'mobile'], default: 'desktop' },
         type: { type: 'string', enum: ['png', 'jpeg', 'webp'], default: 'png' },
+        theme: {
+          type: 'string',
+          enum: ['light', 'dark', 'auto'],
+          default: 'auto',
+          description: 'Color scheme to render before capturing',
+        },
         proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        selector: {
+          type: 'string',
+          description: 'CSS selector of the element to capture, instead of the full viewport/page',
+        },
+        fallbackToFullPage: {
+          type: 'boolean',
+          default: false,
+          description:
+            'If selector is not found, fall back to a full-page capture instead of failing',
+        },
         fullPage: { type: 'boolean', default: false },
         blockAds: { type: 'boolean', default: true },
         hideCookie: { type: 'boolean', default: true, description: 'Hide cookie consent banners' },
         skipCaptcha: { type: 'boolean', default: true },
+        removeBackground: {
+          type: 'boolean',
+          default: false,
+          description: 'Remove page background for a transparent PNG (PNG only)',
+        },
+        disableAnimations: {
+          type: 'boolean',
+          default: false,
+          description: 'Freeze CSS/JS animations and transitions before capturing',
+        },
         addTimestamp: { type: 'boolean', default: false },
         highlightLinks: {
           type: 'boolean',
@@ -119,9 +145,18 @@ const TOOLS = [
         pageHeight: { type: 'number', description: 'Height of page for partial screenshot' },
         viewportWidth: { type: 'number', description: 'Viewport width' },
         viewportHeight: { type: 'number', description: 'Viewport height' },
+        captureBeyondViewport: {
+          type: 'boolean',
+          description: 'Allow the capture to include content beyond the configured viewport',
+        },
         delay: { type: 'number', description: 'Seconds to wait before screenshot' },
         quality: { type: 'number', default: 90, description: 'Image quality for JPEG/WEBP' },
         scaleFactor: { type: 'number', description: 'Device pixel ratio' },
+        inline: {
+          type: 'boolean',
+          default: false,
+          description: 'Return image data inline instead of a CDN URL',
+        },
       },
       required: ['url'],
     },
@@ -424,7 +459,7 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.3.4' },
+    { name: '@geekflare/mcp', version: '0.3.9' },
     { capabilities: { tools: {} } }
   );
 
@@ -641,7 +676,7 @@ async function handleHttpRequest(
       JSON.stringify({
         status: 'ok',
         service: '@geekflare/mcp',
-        version: '0.3.3',
+        version: '0.3.9',
         uptime: process.uptime(),
         sessions: sessions.size,
       })
