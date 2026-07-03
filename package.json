@@ -1,6 +1,6 @@
 {
   "name": "@geekflare/mcp",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Official MCP server for Geekflare API",
   "type": "module",
   "bin": {
