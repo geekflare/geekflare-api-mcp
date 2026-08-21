@@ -62,11 +62,20 @@ const TOOLS = [
           default: ['markdown'],
           description: 'Output format(s). Up to 3.',
         },
-        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
+        proxyMode: {
+          oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['auto'] }],
+          default: false,
+          description:
+            'false never uses a proxy (default), auto tries without a proxy first and retries through one if blocked, true always uses a proxy',
+        },
+        proxyCountry: {
+          type: 'string',
+          description: 'Country code for proxy routing (used when a proxy is active)',
+        },
         renderJS: {
           type: 'boolean',
-          default: true,
-          description: 'Execute JavaScript before extracting',
+          description:
+            'Whether to render JavaScript. If omitted, resolved automatically: fetched without a browser first, then rendered only if the page needs it',
         },
         fileOutput: {
           type: 'boolean',
@@ -75,6 +84,33 @@ const TOOLS = [
         },
         blockAds: { type: 'boolean', default: true },
         stealth: { type: 'boolean', default: false, description: 'Bypass CAPTCHAs (slower)' },
+        waitTime: {
+          type: 'number',
+          default: 0,
+          description: 'Seconds to wait after page load before capturing content',
+        },
+        extractionMode: {
+          type: 'string',
+          enum: ['default', 'cssSchema', 'xpathSchema', 'template'],
+          default: 'default',
+          description: 'Only used if format includes json',
+        },
+        template: {
+          type: 'string',
+          enum: ['product', 'contact'],
+          description:
+            "Ready-made extraction template when extractionMode is 'template'. product extracts title/brand/pricing/availability/images/ratings; contact extracts company/locations/emails/phones/social profiles",
+        },
+        extractionSchema: {
+          type: 'object',
+          description:
+            'Extraction schema for cssSchema/xpathSchema modes: { name, baseSelector?, fields: [{ name, selector, type, attribute?, fields? }] }, or a flat { name, fields: [{ title, value }] } for default mode',
+        },
+        aiPrompt: {
+          type: 'object',
+          description:
+            "AI-powered extraction/analysis of the scraped page, always run against the Markdown regardless of format. Shape depends on 'type': prompt (query), schema (schema), listing (itemSchema, maxItems), summary (style, focus, maxLength), sentiment (aspects), keywords (maxKeywords, includeEntities). Adds +6 credits",
+        },
       },
       required: ['url'],
     },
@@ -172,7 +208,11 @@ const TOOLS = [
         time: { type: 'string', description: 'Time filter: any, d, w, m, y, d7, h6 etc.' },
         location: { type: 'string', description: 'Country code (ISO alpha-2)' },
         source: { type: 'string', enum: ['web', 'news', 'images'], default: 'web' },
-        category: { type: 'string', enum: ['general', 'code', 'research'], default: 'general' },
+        category: {
+          type: 'string',
+          enum: ['general', 'code', 'pdf', 'research', 'linkedin', 'wiki'],
+          default: 'general',
+        },
         format: { type: 'string', enum: ['json', 'markdown', 'html'], default: 'json' },
         includeDomains: {
           type: 'array',
@@ -270,6 +310,7 @@ const TOOLS = [
         scale: { type: 'number', description: 'Zoom level (0–2)' },
         margin: {
           type: 'object',
+          description: 'Margins in mm',
           properties: {
             top: { type: 'number' },
             bottom: { type: 'number' },
@@ -319,43 +360,12 @@ const TOOLS = [
         url: { type: 'string', description: 'Target URL' },
         proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
         followRedirect: { type: 'boolean', default: false },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'ttfb',
-    description: 'Measure Time To First Byte (TTFB) for a URL',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-        followRedirect: { type: 'boolean', default: false },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'httpHeader',
-    description: 'Fetch HTTP response headers for a URL',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
-        followRedirect: { type: 'boolean', default: false },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'httpProtocol',
-    description: 'Detect HTTP protocol versions supported by a URL',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-        followRedirect: { type: 'boolean', default: false },
+        targetCountries: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Up to 3 ISO alpha-2 country codes to also test reachability from via proxy, alongside the default US server test. When set, the response includes a per-location breakdown instead of a single result',
+        },
       },
       required: ['url'],
     },
@@ -438,9 +448,6 @@ const ROUTES: Record<string, string> = {
   openPorts: '/openport',
   tlsScan: '/tlsscan',
   loadTime: '/loadtime',
-  ttfb: '/ttfb',
-  httpHeader: '/httpheader',
-  httpProtocol: '/httpprotocol',
   mixedContent: '/mixedcontent',
   dnsSec: '/dnssec',
   mtr: '/mtr',
@@ -459,7 +466,7 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.3.9' },
+    { name: '@geekflare/mcp', version: '0.4.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -629,21 +636,6 @@ if (MODE === 'http') {
     console.log('=================================');
   });
 } else {
-  // ── stdio mode (Claude Desktop / local npm) ───────────────────────────────
-  //
-  // Claude Desktop does NOT support API-key-in-URL auth for remote HTTP MCP
-  // servers — it expects OAuth. Use stdio mode locally:
-  //
-  //   {
-  //     "mcpServers": {
-  //       "geekflare": {
-  //         "command": "npx",
-  //         "args": ["-y", "@geekflare/mcp"],
-  //         "env": { "API_KEY": "<your-key>" }
-  //       }
-  //     }
-  //   }
-  //
   const apiKey = process.env.API_KEY ?? '';
   if (!apiKey) {
     console.error('[stdio] ERROR: API_KEY environment variable is not set.');
@@ -676,7 +668,7 @@ async function handleHttpRequest(
       JSON.stringify({
         status: 'ok',
         service: '@geekflare/mcp',
-        version: '0.3.9',
+        version: '0.4.0',
         uptime: process.uptime(),
         sessions: sessions.size,
       })
