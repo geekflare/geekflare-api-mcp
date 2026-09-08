@@ -327,17 +327,29 @@ const TOOLS = [
   },
   {
     name: 'openPorts',
-    description: 'Scan open ports on a host',
+    description: 'Scan open ports on a host and optionally detect running services',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'Target URL' },
+        url: {
+          type: 'string',
+          description: 'Target URL',
+        },
         topPorts: {
           type: 'number',
           enum: [50, 100, 500, 1000, 5000],
           description: 'Scan top N ports',
         },
-        portRanges: { type: 'string', description: 'Custom port ranges e.g. 80,443,1000-1010' },
+        portRanges: {
+          type: 'string',
+          description: 'Custom port ranges e.g. 80,443,1000-1010',
+        },
+        detectServices: {
+          type: 'boolean',
+          default: false,
+          description:
+            'Detect the service, product, version, and OS information running on discovered open ports',
+        },
       },
       required: ['url'],
     },
@@ -433,6 +445,32 @@ const TOOLS = [
       required: ['url'],
     },
   },
+  {
+    name: 'brand',
+    description: 'Extract brand identity and design information from a website',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'Target URL',
+        },
+        refresh: {
+          type: 'boolean',
+          default: false,
+          description: 'Force refresh brand data instead of using cached data',
+        },
+        mode: {
+          type: 'string',
+          enum: ['standard', 'enriched'],
+          default: 'standard',
+          description:
+            'Brand extraction mode. Enriched mode includes additional company and brand intelligence',
+        },
+      },
+      required: ['url'],
+    },
+  },
 ];
 
 const ROUTES: Record<string, string> = {
@@ -453,6 +491,7 @@ const ROUTES: Record<string, string> = {
   mtr: '/mtr',
   ping: '/ping',
   lighthouse: '/lighthouse',
+  brand: '/brand',
 };
 
 // ─── MCP Server factory ───────────────────────────────────────────────────────
