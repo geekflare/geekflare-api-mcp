@@ -70,7 +70,8 @@ const TOOLS = [
         },
         proxyCountry: {
           type: 'string',
-          description: 'Country code for proxy routing (used when a proxy is active)',
+          description:
+            'Country code (ISO alpha-2) to route the request through a proxy in. Can be used on its own without proxyMode',
         },
         renderJS: {
           type: 'boolean',
@@ -93,7 +94,8 @@ const TOOLS = [
           type: 'string',
           enum: ['default', 'cssSchema', 'xpathSchema', 'template'],
           default: 'default',
-          description: 'Only used if format includes json',
+          description:
+            'JSON output is used automatically when an extraction mode is requested. Set to template to use a ready-made extraction template',
         },
         template: {
           type: 'string',
@@ -109,7 +111,7 @@ const TOOLS = [
         aiPrompt: {
           type: 'object',
           description:
-            "AI-powered extraction/analysis of the scraped page, always run against the Markdown regardless of format. Shape depends on 'type': prompt (query), schema (schema), listing (itemSchema, maxItems), summary (style, focus, maxLength), sentiment (aspects), keywords (maxKeywords, includeEntities). Adds +6 credits",
+            "AI-powered extraction/analysis of the scraped page, always run against the Markdown regardless of format. Shape depends on 'type': prompt (query), schema (schema), listing (itemSchema, maxItems), summary (style, focus, maxLength), sentiment (aspects), keywords (maxKeywords, includeEntities). Adds +7 credits",
         },
       },
       required: ['url'],
@@ -178,16 +180,47 @@ const TOOLS = [
           default: false,
           description: 'Draw borders around links (useful for AI vision)',
         },
-        pageHeight: { type: 'number', description: 'Height of page for partial screenshot' },
-        viewportWidth: { type: 'number', description: 'Viewport width' },
-        viewportHeight: { type: 'number', description: 'Viewport height' },
+        pageHeight: {
+          type: 'number',
+          minimum: 100,
+          maximum: 5000,
+          description: 'Height of page for partial screenshot',
+        },
+        viewportWidth: {
+          type: 'number',
+          minimum: 320,
+          maximum: 3840,
+          description: 'Viewport width',
+        },
+        viewportHeight: {
+          type: 'number',
+          minimum: 240,
+          maximum: 2160,
+          description: 'Viewport height',
+        },
         captureBeyondViewport: {
           type: 'boolean',
           description: 'Allow the capture to include content beyond the configured viewport',
         },
-        delay: { type: 'number', description: 'Seconds to wait before screenshot' },
-        quality: { type: 'number', default: 90, description: 'Image quality for JPEG/WEBP' },
-        scaleFactor: { type: 'number', description: 'Device pixel ratio' },
+        delay: {
+          type: 'number',
+          minimum: 0,
+          maximum: 10,
+          description: 'Seconds to wait before screenshot',
+        },
+        quality: {
+          type: 'number',
+          default: 90,
+          minimum: 10,
+          maximum: 100,
+          description: 'Image quality for JPEG/WEBP',
+        },
+        scaleFactor: {
+          type: 'number',
+          minimum: 0.1,
+          maximum: 5,
+          description: 'Device pixel ratio',
+        },
         inline: {
           type: 'boolean',
           default: false,
@@ -199,21 +232,59 @@ const TOOLS = [
   },
   {
     name: 'search',
-    description: 'Search the web and return clean results in JSON, Markdown, or HTML',
+    description:
+      'Search the web and return clean results in JSON, Markdown, or HTML. Also supports scraping result pages, AI grounded answers, and the full Google results page (SERP) via serp: true',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query' },
-        limit: { type: 'number', default: 10, description: 'Number of results' },
-        time: { type: 'string', description: 'Time filter: any, d, w, m, y, d7, h6 etc.' },
-        location: { type: 'string', description: 'Country code (ISO alpha-2)' },
-        source: { type: 'string', enum: ['web', 'news', 'images'], default: 'web' },
+        query: { type: 'string', maxLength: 2048, description: 'Search query' },
+        limit: {
+          type: 'number',
+          default: 10,
+          minimum: 1,
+          maximum: 100,
+          description: 'Number of results',
+        },
+        time: {
+          type: 'string',
+          default: 'any',
+          description: 'Time filter: any, h, d, w, m, y, or with a count like h2, h6, d7',
+        },
+        location: {
+          type: 'string',
+          default: 'us',
+          description:
+            'Country code (ISO alpha-2). When city is set, city takes priority over location',
+        },
+        city: {
+          type: 'string',
+          description:
+            "City for localized results, using the name exactly as listed in the supported cities file, e.g. 'London,England,United Kingdom'. Works with standard search and serp: true. Supported cities: https://cdn.geekflare.com/api-assets/geotargets-2026-08-12.json",
+        },
+        device: {
+          type: 'string',
+          enum: ['desktop', 'mobile'],
+          default: 'desktop',
+          description: 'Device to emulate when searching',
+        },
+        source: {
+          type: 'string',
+          enum: ['web', 'news', 'images'],
+          default: 'web',
+          description: 'Search source. SERP mode accepts one source per request',
+        },
         category: {
           type: 'string',
           enum: ['general', 'code', 'pdf', 'research', 'linkedin', 'wiki'],
           default: 'general',
+          description: 'Category filter. Ignored in SERP mode',
         },
-        format: { type: 'string', enum: ['json', 'markdown', 'html'], default: 'json' },
+        format: {
+          type: 'string',
+          enum: ['json', 'markdown', 'html'],
+          default: 'json',
+          description: 'Output format. Ignored in SERP mode',
+        },
         includeDomains: {
           type: 'array',
           items: { type: 'string' },
@@ -227,10 +298,26 @@ const TOOLS = [
         groundedAnswer: {
           type: 'boolean',
           default: false,
-          description: 'Generate AI-grounded answer from results',
+          description: 'Generate AI-grounded answer from results. Ignored in SERP mode',
         },
-        scrape: { type: 'boolean', default: false, description: 'Scrape content from result URLs' },
-        scrapeLimit: { type: 'number', default: 3, description: 'Number of URLs to scrape' },
+        scrape: {
+          type: 'boolean',
+          default: false,
+          description: 'Scrape content from result URLs. Ignored in SERP mode',
+        },
+        scrapeLimit: {
+          type: 'number',
+          default: 3,
+          minimum: 1,
+          maximum: 10,
+          description: 'Number of URLs to scrape (requires scrape: true). Ignored in SERP mode',
+        },
+        serp: {
+          type: 'boolean',
+          default: false,
+          description:
+            'Return the full Google results page: organic results, AI Overview, related searches, People Also Ask and pagination (first page only). Supports query, location, city, device, limit, source (one value), time, includeDomains and excludeDomains; category, format, scrape and groundedAnswer are ignored',
+        },
       },
       required: ['query'],
     },
@@ -249,6 +336,7 @@ const TOOLS = [
             enum: ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'SOA', 'TXT', 'CAA', 'SRV'],
           },
           default: ['A', 'AAAA', 'CNAME', 'MX', 'CAA', 'NS', 'SOA', 'SRV', 'TXT'],
+          description: 'DNS record types to query. If omitted, all supported types are returned',
         },
       },
       required: ['url'],
@@ -307,7 +395,7 @@ const TOOLS = [
         },
         orientation: { type: 'string', enum: ['portrait', 'landscape'], default: 'portrait' },
         proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
-        scale: { type: 'number', description: 'Zoom level (0–2)' },
+        scale: { type: 'number', default: 1, description: 'Zoom level (0–2)' },
         margin: {
           type: 'object',
           description: 'Margins in mm',
@@ -318,8 +406,8 @@ const TOOLS = [
             right: { type: 'number' },
           },
         },
-        hideCookie: { type: 'boolean', default: true },
-        skipCaptcha: { type: 'boolean', default: true },
+        hideCookie: { type: 'boolean', default: false },
+        skipCaptcha: { type: 'boolean', default: false },
         addTimestamp: { type: 'boolean', default: false },
       },
       required: ['url'],
@@ -375,6 +463,7 @@ const TOOLS = [
         targetCountries: {
           type: 'array',
           items: { type: 'string' },
+          maxItems: 3,
           description:
             'Up to 3 ISO alpha-2 country codes to also test reachability from via proxy, alongside the default US server test. When set, the response includes a per-location breakdown instead of a single result',
         },
@@ -505,7 +594,7 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   });
 
   const server = new Server(
-    { name: '@geekflare/mcp', version: '0.4.1' },
+    { name: '@geekflare/mcp', version: '0.4.2' },
     { capabilities: { tools: {} } }
   );
 
@@ -707,7 +796,7 @@ async function handleHttpRequest(
       JSON.stringify({
         status: 'ok',
         service: '@geekflare/mcp',
-        version: '0.4.1',
+        version: '0.4.2',
         uptime: process.uptime(),
         sessions: sessions.size,
       })
