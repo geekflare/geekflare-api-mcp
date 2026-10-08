@@ -12,9 +12,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const ISSUER = (process.env.OAUTH_ISSUER ?? 'https://dash.geekflare.com').replace(/\/+$/, '');
 const REQUIRED_SCOPE = 'geekflare:use';
-const BACKEND_URL = (process.env.BACKEND_INTERNAL_URL ?? '').replace(/\/+$/, '');
 const BRIDGE_SECRET = process.env.OAUTH_BRIDGE_SECRET ?? '';
-const BACKEND_INTERNAL_KEY = process.env.BACKEND_INTERNAL_KEY ?? ''; // only if you call the backend without the gateway
 const KEY_CACHE_MS = 60_000;
 
 /** MCP endpoint URLs that accept OAuth tokens. Add one per app if you want separate URLs. */
@@ -118,25 +116,22 @@ export async function authenticateOAuthRequest(
 
 const keyCache = new Map<string, { apiKey: string; expires: number }>();
 
-export async function resolveApiKey(principal: OAuthPrincipal): Promise<string> {
+/** `baseUrl` is the same API_BASE_URL the MCP service already uses for tool calls (the backend, through the gateway). */
+export async function resolveApiKey(principal: OAuthPrincipal, baseUrl: string): Promise<string> {
   const cached = keyCache.get(principal.grantId);
   if (cached && cached.expires > Date.now()) return cached.apiKey;
   keyCache.delete(principal.grantId);
 
-  if (!BACKEND_URL || !BRIDGE_SECRET) {
-    console.error('[oauth] BACKEND_INTERNAL_URL / OAUTH_BRIDGE_SECRET are not configured');
+  if (!BRIDGE_SECRET) {
+    console.error('[oauth] OAUTH_BRIDGE_SECRET is not configured');
     throw new BridgeError(503, 'temporarily_unavailable', 'Bridge is not configured');
   }
 
   let result: { active?: boolean; apiKey?: string };
   try {
-    const response = await fetch(`${BACKEND_URL}/oauth/internal/api-key`, {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/oauth/internal/api-key`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-bridge-secret': BRIDGE_SECRET,
-        ...(BACKEND_INTERNAL_KEY ? { 'x-internal-key': BACKEND_INTERNAL_KEY } : {}),
-      },
+      headers: { 'content-type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
       body: JSON.stringify({ userId: principal.userId, grantId: principal.grantId }),
       signal: AbortSignal.timeout(5_000),
     });
