@@ -7,6 +7,14 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import axios from 'axios';
 import http from 'http';
 import { randomUUID } from 'crypto';
+import {
+  authenticateOAuthRequest,
+  resolveApiKey,
+  matchOAuthResource,
+  matchMetadataResource,
+  serveProtectedResourceMetadata,
+  sendBridgeError,
+} from './oauth-bridge.js';
 
 const DEFAULT_BASE_URL = 'https://api.geekflare.com';
 
@@ -639,6 +647,87 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+async function serveMcp(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  apiKey: string,
+  BASE_URL: string,
+  ownerId?: string
+): Promise<void> {
+  const sessionIdHeader = req.headers['mcp-session-id'] as string | undefined;
+  const found = sessionIdHeader ? sessions.get(sessionIdHeader) : undefined;
+  const existing = found && found.ownerId === ownerId ? found : undefined;
+
+  if (req.method === 'DELETE') {
+    if (existing && sessionIdHeader) {
+      await existing.transport.close().catch(() => {});
+      sessions.delete(sessionIdHeader);
+      console.log(`[session] deleted ${sessionIdHeader}`);
+    }
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.method === 'GET') {
+    if (existing) {
+      existing.lastSeen = Date.now();
+      await safeHandleRequest(existing.transport, req, res);
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'No active session. POST to this endpoint to initialise.' }));
+    return;
+  }
+
+  if (req.method === 'POST') {
+    let rawBody: string;
+    try {
+      rawBody = await readBody(req);
+    } catch (err) {
+      console.error('[http] failed to read body:', err);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to read request body' }));
+      return;
+    }
+    const parsed = safeJsonParse(rawBody);
+    if (!parsed.ok) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
+      return;
+    }
+
+    if (existing) {
+      existing.lastSeen = Date.now();
+      await safeHandleRequest(existing.transport, req, res, parsed.value);
+      return;
+    }
+
+    const sessionId = randomUUID();
+    console.log(`[session] created ${sessionId}`);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => sessionId });
+    const server = createMcpServer(apiKey, BASE_URL);
+    try {
+      await server.connect(transport);
+    } catch (err) {
+      console.error('[session] connect error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to initialise MCP session' }));
+      return;
+    }
+    sessions.set(sessionId, { transport, server, lastSeen: Date.now(), ownerId });
+    transport.onclose = () => {
+      sessions.delete(sessionId);
+      console.log(`[session] closed ${sessionId}`);
+    };
+    await safeHandleRequest(transport, req, res, parsed.value);
+    return;
+  }
+
+  res.writeHead(405, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Method not allowed' }));
+}
+
 /**
  * Safe JSON parse. Returns parsed value on success, or `null` on failure
  * (avoids throwing SyntaxError into the HTTP handler).
@@ -665,6 +754,7 @@ function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): bo
     'Content-Type, Authorization, mcp-session-id, x-api-key'
   );
   res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
+  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, WWW-Authenticate');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -680,6 +770,7 @@ interface Session {
   transport: StreamableHTTPServerTransport;
   server: Server;
   lastSeen: number;
+  ownerId?: string; // set for OAuth sessions; undefined for legacy /{API_KEY}/mcp sessions
 }
 
 const sessions = new Map<string, Session>();
@@ -804,6 +895,28 @@ async function handleHttpRequest(
     return;
   }
 
+  // ── OAuth clients (ChatGPT, ...) ────────────────────────────────────────────
+  const metadataResource = matchMetadataResource(url.pathname);
+  if (metadataResource) {
+    serveProtectedResourceMetadata(res, metadataResource);
+    return;
+  }
+  const oauthResource = matchOAuthResource(url.pathname);
+  if (oauthResource) {
+    let apiKey: string;
+    let userId: string;
+    try {
+      const principal = await authenticateOAuthRequest(req, oauthResource); // checked on EVERY request
+      userId = principal.userId;
+      apiKey = await resolveApiKey(principal); // also confirms the connection is still active
+    } catch (error) {
+      if (sendBridgeError(res, error, oauthResource)) return;
+      throw error;
+    }
+    await serveMcp(req, res, apiKey, BASE_URL, userId);
+    return;
+  }
+
   // ── /{API_KEY}/mcp ───────────────────────────────────────────────────────────
   const match = url.pathname.match(/^\/([^/]+)\/mcp\/?$/);
 
@@ -820,110 +933,112 @@ async function handleHttpRequest(
     return;
   }
 
-  // ── DELETE  →  terminate session ─────────────────────────────────────────────
-  if (req.method === 'DELETE') {
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (sessionId && sessions.has(sessionId)) {
-      const session = sessions.get(sessionId)!;
-      await session.transport.close().catch(() => {});
-      sessions.delete(sessionId);
-      console.log(`[session] deleted ${sessionId}`);
-    }
-    res.writeHead(204);
-    res.end();
-    return;
-  }
+  await serveMcp(req, res, apiKey, BASE_URL);
 
-  // ── GET  →  re-attach to existing SSE stream only ────────────────────────────
-  //
-  // Do NOT return a discovery blob here — Cursor and other clients interpret
-  // any non-error GET response as "the server replied" and never POST to init.
-  if (req.method === 'GET') {
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  // // ── DELETE  →  terminate session ─────────────────────────────────────────────
+  // if (req.method === 'DELETE') {
+  //   const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  //   if (sessionId && sessions.has(sessionId)) {
+  //     const session = sessions.get(sessionId)!;
+  //     await session.transport.close().catch(() => {});
+  //     sessions.delete(sessionId);
+  //     console.log(`[session] deleted ${sessionId}`);
+  //   }
+  //   res.writeHead(204);
+  //   res.end();
+  //   return;
+  // }
 
-    if (sessionId && sessions.has(sessionId)) {
-      const session = sessions.get(sessionId)!;
-      session.lastSeen = Date.now();
-      await safeHandleRequest(session.transport, req, res);
-      return;
-    }
+  // // ── GET  →  re-attach to existing SSE stream only ────────────────────────────
+  // //
+  // // Do NOT return a discovery blob here — Cursor and other clients interpret
+  // // any non-error GET response as "the server replied" and never POST to init.
+  // if (req.method === 'GET') {
+  //   const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'No active session. POST to this endpoint to initialise.',
-        usage: 'POST /{API_KEY}/mcp',
-      })
-    );
-    return;
-  }
+  //   if (sessionId && sessions.has(sessionId)) {
+  //     const session = sessions.get(sessionId)!;
+  //     session.lastSeen = Date.now();
+  //     await safeHandleRequest(session.transport, req, res);
+  //     return;
+  //   }
 
-  // ── POST  →  main MCP messages ────────────────────────────────────────────────
-  if (req.method === 'POST') {
-    // Read body
-    let rawBody: string;
-    try {
-      rawBody = await readBody(req);
-    } catch (err) {
-      console.error('[http] failed to read body:', err);
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to read request body' }));
-      return;
-    }
+  //   res.writeHead(404, { 'Content-Type': 'application/json' });
+  //   res.end(
+  //     JSON.stringify({
+  //       error: 'No active session. POST to this endpoint to initialise.',
+  //       usage: 'POST /{API_KEY}/mcp',
+  //     })
+  //   );
+  //   return;
+  // }
 
-    // FIX: Use safeJsonParse so a truncated / empty body never throws
-    // SyntaxError up through the stack and crashes the server.
-    const parsed = safeJsonParse(rawBody);
-    if (!parsed.ok) {
-      console.error('[http] invalid JSON body (first 200 chars):', rawBody.slice(0, 200));
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
-      return;
-    }
-    const parsedBody = parsed.value;
+  // // ── POST  →  main MCP messages ────────────────────────────────────────────────
+  // if (req.method === 'POST') {
+  //   // Read body
+  //   let rawBody: string;
+  //   try {
+  //     rawBody = await readBody(req);
+  //   } catch (err) {
+  //     console.error('[http] failed to read body:', err);
+  //     res.writeHead(400, { 'Content-Type': 'application/json' });
+  //     res.end(JSON.stringify({ error: 'Failed to read request body' }));
+  //     return;
+  //   }
 
-    // Route to an existing session if the client sent a session ID
-    const incomingSessionId = req.headers['mcp-session-id'] as string | undefined;
+  //   // FIX: Use safeJsonParse so a truncated / empty body never throws
+  //   // SyntaxError up through the stack and crashes the server.
+  //   const parsed = safeJsonParse(rawBody);
+  //   if (!parsed.ok) {
+  //     console.error('[http] invalid JSON body (first 200 chars):', rawBody.slice(0, 200));
+  //     res.writeHead(400, { 'Content-Type': 'application/json' });
+  //     res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
+  //     return;
+  //   }
+  //   const parsedBody = parsed.value;
 
-    if (incomingSessionId && sessions.has(incomingSessionId)) {
-      const session = sessions.get(incomingSessionId)!;
-      session.lastSeen = Date.now();
-      await safeHandleRequest(session.transport, req, res, parsedBody);
-      return;
-    }
+  //   // Route to an existing session if the client sent a session ID
+  //   const incomingSessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    // ── New session ─────────────────────────────────────────────────────────
-    const sessionId = randomUUID();
-    console.log(`[session] created ${sessionId}`);
+  //   if (incomingSessionId && sessions.has(incomingSessionId)) {
+  //     const session = sessions.get(incomingSessionId)!;
+  //     session.lastSeen = Date.now();
+  //     await safeHandleRequest(session.transport, req, res, parsedBody);
+  //     return;
+  //   }
 
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => sessionId,
-    });
+  //   // ── New session ─────────────────────────────────────────────────────────
+  //   const sessionId = randomUUID();
+  //   console.log(`[session] created ${sessionId}`);
 
-    const server = createMcpServer(apiKey, BASE_URL);
+  //   const transport = new StreamableHTTPServerTransport({
+  //     sessionIdGenerator: () => sessionId,
+  //   });
 
-    try {
-      await server.connect(transport);
-    } catch (err) {
-      console.error('[session] connect error:', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to initialise MCP session' }));
-      return;
-    }
+  //   const server = createMcpServer(apiKey, BASE_URL);
 
-    const session: Session = { transport, server, lastSeen: Date.now() };
-    sessions.set(sessionId, session);
+  //   try {
+  //     await server.connect(transport);
+  //   } catch (err) {
+  //     console.error('[session] connect error:', err);
+  //     res.writeHead(500, { 'Content-Type': 'application/json' });
+  //     res.end(JSON.stringify({ error: 'Failed to initialise MCP session' }));
+  //     return;
+  //   }
 
-    transport.onclose = () => {
-      sessions.delete(sessionId);
-      console.log(`[session] closed ${sessionId}`);
-    };
+  //   const session: Session = { transport, server, lastSeen: Date.now() };
+  //   sessions.set(sessionId, session);
 
-    await safeHandleRequest(transport, req, res, parsedBody);
-    return;
-  }
+  //   transport.onclose = () => {
+  //     sessions.delete(sessionId);
+  //     console.log(`[session] closed ${sessionId}`);
+  //   };
 
-  // ── Unsupported method ────────────────────────────────────────────────────────
-  res.writeHead(405, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Method not allowed' }));
+  //   await safeHandleRequest(transport, req, res, parsedBody);
+  //   return;
+  // }
+
+  // // ── Unsupported method ────────────────────────────────────────────────────────
+  // res.writeHead(405, { 'Content-Type': 'application/json' });
+  // res.end(JSON.stringify({ error: 'Method not allowed' }));
 }
