@@ -33,7 +33,7 @@ const resourceByPath = new Map(
   RESOURCES.map((resource) => [trimPath(new URL(resource).pathname), resource])
 );
 
-const jwks = createRemoteJWKSet(new URL(`${ISSUER}/auth/oauth/jwks`), {
+const jwks = createRemoteJWKSet(new URL(`${ISSUER}/oauth/jwks`), {
   cooldownDuration: 30_000,
   cacheMaxAge: 10 * 60_000,
 });
