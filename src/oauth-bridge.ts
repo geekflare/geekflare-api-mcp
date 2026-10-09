@@ -10,15 +10,21 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
  *     3. hand the key to the existing createMcpServer(apiKey); it never leaves this process
  */
 
-const ISSUER = (process.env.OAUTH_ISSUER ?? 'https://dash.geekflare.com').replace(/\/+$/, '');
+const ISSUER: string = (process.env.OAUTH_ISSUER ?? 'https://dash.geekflare.com').replace(
+  /\/+$/,
+  ''
+);
 const REQUIRED_SCOPE = 'geekflare:use';
 const BRIDGE_SECRET = process.env.OAUTH_BRIDGE_SECRET ?? '';
 const KEY_CACHE_MS = 60_000;
+const trimPath = (pathname: string): string => pathname.replace(/\/+$/, '');
 
 /** MCP endpoint URLs that accept OAuth tokens. Add one per app if you want separate URLs. */
-const RESOURCES = (process.env.OAUTH_MCP_RESOURCES ?? 'https://mcp.geekflare.com/chatgpt/mcp')
+const RESOURCES: string[] = String(
+  process.env.OAUTH_MCP_RESOURCES ?? 'https://mcp.geekflare.com/chatgpt/mcp'
+)
   .split(',')
-  .map((value) => value.trim().replace(/\/+$/, ''))
+  .map((value: string) => value.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
 /** Effective OAuth settings, printed at startup so a missing env var is visible in the container logs. */
@@ -28,9 +34,11 @@ export const describeOAuthConfig = () => ({
   bridgeSecretConfigured: BRIDGE_SECRET.length > 0,
 });
 
-const trimPath = (pathname: string): string => pathname.replace(/\/+$/, '');
-const resourceByPath = new Map(
-  RESOURCES.map((resource) => [trimPath(new URL(resource).pathname), resource])
+const resourceByPath = new Map<string, string>(
+  RESOURCES.map((resource: string): [string, string] => [
+    trimPath(new URL(resource).pathname),
+    resource,
+  ])
 );
 
 const jwks = createRemoteJWKSet(new URL(`${ISSUER}/oauth/jwks`), {
@@ -55,23 +63,27 @@ export class BridgeError extends Error {
   }
 }
 
+const METADATA_PREFIXES = [
+  '/.well-known/oauth-protected-resource', // standard (RFC 9728)
+  '/auth/.well-known/oauth-protected-resource', // keep the old one working
+];
+
 const metadataUrl = (resource: string): string => {
   const url = new URL(resource);
-  return `${url.origin}/auth/.well-known/oauth-protected-resource${trimPath(url.pathname)}`;
+  return `${url.origin}/.well-known/oauth-protected-resource${trimPath(url.pathname)}`;
 };
 
+export function matchMetadataResource(pathname: string): string | undefined {
+  const path = trimPath(pathname);
+  for (const prefix of METADATA_PREFIXES) {
+    if (path === prefix) return RESOURCES[0];
+    if (path.startsWith(`${prefix}/`)) return resourceByPath.get(path.slice(prefix.length));
+  }
+  return undefined;
+}
 /** Returns the resource URL if this request path is an OAuth-protected MCP endpoint. */
 export const matchOAuthResource = (pathname: string): string | undefined =>
   resourceByPath.get(trimPath(pathname));
-
-/** Returns the resource whose metadata is being requested (the bare well-known path means the first resource). */
-export function matchMetadataResource(pathname: string): string | undefined {
-  const path = trimPath(pathname);
-  const prefix = '/auth/.well-known/oauth-protected-resource';
-  if (path === prefix) return RESOURCES[0];
-  if (path.startsWith(`${prefix}/`)) return resourceByPath.get(path.slice(prefix.length));
-  return undefined;
-}
 
 /** RFC 9728 protected-resource metadata: tells the client which authorization server to use. */
 export function serveProtectedResourceMetadata(res: http.ServerResponse, resource: string): void {

@@ -618,8 +618,6 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   }));
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: ANNOTATED_TOOLS }));
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const route = ROUTES[name];
@@ -761,12 +759,12 @@ function safeJsonParse(raw: string): { ok: true; value: unknown } | { ok: false 
 function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, mcp-session-id, x-api-key'
-  );
   res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
   res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, WWW-Authenticate');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, mcp-session-id, mcp-protocol-version, last-event-id, x-api-key'
+  );
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
