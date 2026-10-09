@@ -136,7 +136,9 @@ export async function resolveApiKey(principal: OAuthPrincipal, baseUrl: string):
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) throw new Error(`backend status ${response.status}`);
-    result = (await response.json()) as { active?: boolean; apiKey?: string };
+    // An empty body counts as "not active" (the backend strips empty values from responses).
+    const text = await response.text();
+    result = text ? (JSON.parse(text) as { active?: boolean; apiKey?: string }) : {};
   } catch (error) {
     console.error('[oauth] key lookup failed:', error instanceof Error ? error.message : 'unknown');
     throw new BridgeError(503, 'temporarily_unavailable', 'Could not verify the account');
