@@ -908,7 +908,7 @@ async function handleHttpRequest(
     try {
       const principal = await authenticateOAuthRequest(req, oauthResource); // checked on EVERY request
       userId = principal.userId;
-      apiKey = await resolveApiKey(principal); // also confirms the connection is still active
+      apiKey = await resolveApiKey(principal, BASE_URL); // also confirms the connection is still active
     } catch (error) {
       if (sendBridgeError(res, error, oauthResource)) return;
       throw error;
