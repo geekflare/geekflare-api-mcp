@@ -759,7 +759,6 @@ function safeJsonParse(raw: string): { ok: true; value: unknown } | { ok: false 
 function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
   res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, WWW-Authenticate');
   res.setHeader(
     'Access-Control-Allow-Headers',
