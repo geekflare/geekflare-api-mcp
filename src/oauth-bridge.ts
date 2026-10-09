@@ -33,7 +33,7 @@ const resourceByPath = new Map(
   RESOURCES.map((resource) => [trimPath(new URL(resource).pathname), resource])
 );
 
-const jwks = createRemoteJWKSet(new URL(`${ISSUER}/oauth/jwks`), {
+const jwks = createRemoteJWKSet(new URL(`${ISSUER}/auth/oauth/jwks`), {
   cooldownDuration: 30_000,
   cacheMaxAge: 10 * 60_000,
 });
@@ -136,7 +136,7 @@ export async function resolveApiKey(principal: OAuthPrincipal, baseUrl: string):
 
   let result: { active?: boolean; apiKey?: string };
   try {
-    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/oauth/internal/api-key`, {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/auth/oauth/internal/api-key`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
       body: JSON.stringify({ userId: principal.userId, grantId: principal.grantId }),
