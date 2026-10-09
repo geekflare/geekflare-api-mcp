@@ -21,6 +21,13 @@ const RESOURCES = (process.env.OAUTH_MCP_RESOURCES ?? 'https://mcp.geekflare.com
   .map((value) => value.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
+/** Effective OAuth settings, printed at startup so a missing env var is visible in the container logs. */
+export const describeOAuthConfig = () => ({
+  issuer: ISSUER,
+  resources: RESOURCES,
+  bridgeSecretConfigured: BRIDGE_SECRET.length > 0,
+});
+
 const trimPath = (pathname: string): string => pathname.replace(/\/+$/, '');
 const resourceByPath = new Map(
   RESOURCES.map((resource) => [trimPath(new URL(resource).pathname), resource])
@@ -50,7 +57,7 @@ export class BridgeError extends Error {
 
 const metadataUrl = (resource: string): string => {
   const url = new URL(resource);
-  return `${url.origin}/.well-known/oauth-protected-resource${trimPath(url.pathname)}`;
+  return `${url.origin}/auth/.well-known/oauth-protected-resource${trimPath(url.pathname)}`;
 };
 
 /** Returns the resource URL if this request path is an OAuth-protected MCP endpoint. */
@@ -60,7 +67,7 @@ export const matchOAuthResource = (pathname: string): string | undefined =>
 /** Returns the resource whose metadata is being requested (the bare well-known path means the first resource). */
 export function matchMetadataResource(pathname: string): string | undefined {
   const path = trimPath(pathname);
-  const prefix = '/.well-known/oauth-protected-resource';
+  const prefix = '/auth/.well-known/oauth-protected-resource';
   if (path === prefix) return RESOURCES[0];
   if (path.startsWith(`${prefix}/`)) return resourceByPath.get(path.slice(prefix.length));
   return undefined;

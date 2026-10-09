@@ -14,6 +14,7 @@ import {
   matchMetadataResource,
   serveProtectedResourceMetadata,
   sendBridgeError,
+  describeOAuthConfig,
 } from './oauth-bridge.js';
 
 const DEFAULT_BASE_URL = 'https://api.geekflare.com';
@@ -606,6 +607,17 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
     { capabilities: { tools: {} } }
   );
 
+  const ANNOTATED_TOOLS = TOOLS.map((tool) => ({
+    ...tool,
+    annotations: {
+      title: tool.name,
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: ANNOTATED_TOOLS }));
+
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -843,6 +855,7 @@ if (MODE === 'http') {
   });
 
   setupGracefulShutdown(httpServer);
+  const oauth = describeOAuthConfig();
 
   httpServer.listen(PORT, () => {
     console.log('=================================');
@@ -852,6 +865,9 @@ if (MODE === 'http') {
     console.log(`Mode:     ${MODE}`);
     console.log(`Health:   http://localhost:${PORT}/health`);
     console.log(`MCP:      http://localhost:${PORT}/{API_KEY}/mcp`);
+    console.log(
+      `OAuth:    issuer=${oauth.issuer} resources=${oauth.resources.join(',')} bridgeSecret=${oauth.bridgeSecretConfigured ? 'set' : 'MISSING'}`
+    );
     console.log('=================================');
   });
 } else {
