@@ -19,6 +19,7 @@ services:
       OAUTH_ISSUER: ${OAUTH_ISSUER:-https://dash.geekflare.com}
       OAUTH_MCP_RESOURCES: ${OAUTH_MCP_RESOURCES:-https://mcp.geekflare.com/chatgpt/mcp}
       OAUTH_BRIDGE_SECRET: ${OAUTH_BRIDGE_SECRET:-}
+      OPENAI_APPS_CHALLENGE: ${OPENAI_APPS_CHALLENGE:-}
 
     ports:
       - '${PORT:-5000}:${PORT:-5000}'
