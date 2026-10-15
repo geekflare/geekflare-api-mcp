@@ -175,7 +175,7 @@ const TOOLS = [
         fullPage: { type: 'boolean', default: false },
         blockAds: { type: 'boolean', default: true },
         hideCookie: { type: 'boolean', default: true, description: 'Hide cookie consent banners' },
-        skipCaptcha: { type: 'boolean', default: true },
+        // skipCaptcha: { type: 'boolean', default: true },
         removeBackground: {
           type: 'boolean',
           default: false,
@@ -419,7 +419,7 @@ const TOOLS = [
           },
         },
         hideCookie: { type: 'boolean', default: false },
-        skipCaptcha: { type: 'boolean', default: false },
+        // skipCaptcha: { type: 'boolean', default: false },
         addTimestamp: { type: 'boolean', default: false },
       },
       required: ['url'],
