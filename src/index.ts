@@ -96,7 +96,11 @@ const TOOLS = [
           description: 'Return a download URL instead of inline data',
         },
         blockAds: { type: 'boolean', default: true },
-        stealth: { type: 'boolean', default: false, description: 'Bypass CAPTCHAs (slower)' },
+        stealth: {
+          type: 'boolean',
+          default: false,
+          description: 'Use a full browser profile for pages that fail to render.',
+        },
         waitTime: {
           type: 'number',
           default: 0,
