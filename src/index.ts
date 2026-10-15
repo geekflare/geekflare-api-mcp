@@ -74,17 +74,17 @@ const TOOLS = [
           default: ['markdown'],
           description: 'Output format(s). Up to 3.',
         },
-        proxyMode: {
-          oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['auto'] }],
-          default: false,
-          description:
-            'false never uses a proxy (default), auto tries without a proxy first and retries through one if blocked, true always uses a proxy',
-        },
-        proxyCountry: {
-          type: 'string',
-          description:
-            'Country code (ISO alpha-2) to route the request through a proxy in. Can be used on its own without proxyMode',
-        },
+        // proxyMode: {
+        //   oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['auto'] }],
+        //   default: false,
+        //   description:
+        //     'false never uses a proxy (default), auto tries without a proxy first and retries through one if blocked, true always uses a proxy',
+        // },
+        // proxyCountry: {
+        //   type: 'string',
+        //   description:
+        //     'Country code (ISO alpha-2) to route the request through a proxy in. Can be used on its own without proxyMode',
+        // },
         renderJS: {
           type: 'boolean',
           description:
