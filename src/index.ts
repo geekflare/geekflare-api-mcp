@@ -74,12 +74,12 @@ const TOOLS = [
           default: ['markdown'],
           description: 'Output format(s). Up to 3.',
         },
-        // proxyMode: {
-        //   oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['auto'] }],
-        //   default: false,
-        //   description:
-        //     'false never uses a proxy (default), auto tries without a proxy first and retries through one if blocked, true always uses a proxy',
-        // },
+        proxyMode: {
+          oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['auto'] }],
+          default: false,
+          description:
+            'false (default): fetch directly. auto: fetch directly, then retry through a regional network if the first attempt fails. true: always use a regional network.',
+        },
         proxyCountry: {
           type: 'string',
           description:
