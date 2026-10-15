@@ -90,7 +90,6 @@ export function serveProtectedResourceMetadata(res: http.ServerResponse, resourc
   res.writeHead(200, {
     'Content-Type': 'application/json',
     'Cache-Control': 'public, max-age=300',
-    'Access-Control-Allow-Origin': '*',
   });
   res.end(
     JSON.stringify({

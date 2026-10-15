@@ -16,8 +16,11 @@ import {
   sendBridgeError,
   describeOAuthConfig,
 } from './oauth-bridge.js';
+// import { Buffer } from 'buffer';
+// import process from 'process';
 
 const DEFAULT_BASE_URL = 'https://api.geekflare.com';
+const OPENAI_APPS_CHALLENGE = process.env.OPENAI_APPS_CHALLENGE;
 
 // ─── Global uncaught error handlers ──────────────────────────────────────────
 // Prevents the process from dying on any unhandled rejection or exception.
@@ -905,6 +908,22 @@ async function handleHttpRequest(
         sessions: sessions.size,
       })
     );
+    return;
+  }
+
+  // ── OpenAI domain verification (public, no auth, never cached) ──────────────
+  if (url.pathname === '/.well-known/openai-apps-challenge') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain' });
+      res.end('Method not allowed');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Content-Length': Buffer.byteLength(OPENAI_APPS_CHALLENGE),
+      'Cache-Control': 'no-store',
+    });
+    res.end(OPENAI_APPS_CHALLENGE);
     return;
   }
 
