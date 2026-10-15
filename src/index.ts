@@ -80,11 +80,11 @@ const TOOLS = [
         //   description:
         //     'false never uses a proxy (default), auto tries without a proxy first and retries through one if blocked, true always uses a proxy',
         // },
-        // proxyCountry: {
-        //   type: 'string',
-        //   description:
-        //     'Country code (ISO alpha-2) to route the request through a proxy in. Can be used on its own without proxyMode',
-        // },
+        proxyCountry: {
+          type: 'string',
+          description:
+            'Country code (ISO alpha-2) to route the request through a proxy in. Can be used on its own without proxyMode',
+        },
         renderJS: {
           type: 'boolean',
           description:
