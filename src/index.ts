@@ -876,6 +876,10 @@ if (MODE === 'http') {
     console.error('[stdio] ERROR: API_KEY environment variable is not set.');
     process.exit(1);
   }
+  if (!OPENAI_APPS_CHALLENGE) {
+    console.error('[stdio] ERROR: OPENAI_APPS_CHALLENGE environment variable is not set.');
+    process.exit(1);
+  }
   const baseUrl = process.env.API_BASE_URL ?? DEFAULT_BASE_URL;
   const server = createMcpServer(apiKey, baseUrl);
   const transport = new StdioServerTransport();
