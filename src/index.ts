@@ -56,6 +56,27 @@ function setupGracefulShutdown(server: http.Server) {
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
+const TITLES: Record<string, string> = {
+  webScrape: 'Web Scrape',
+  metaScrape: 'Meta Scrape',
+  screenshot: 'Screenshot',
+  search: 'Web Search',
+  dnsRecord: 'DNS Records',
+  siteStatus: 'Site Status',
+  redirectCheck: 'Redirect Check',
+  brokenLink: 'Broken Links',
+  url2Pdf: 'URL to PDF',
+  openPorts: 'Open Ports',
+  tlsScan: 'TLS Scan',
+  loadTime: 'Load Time',
+  mixedContent: 'Mixed Content',
+  dnsSec: 'DNSSEC',
+  mtr: 'MTR',
+  ping: 'Ping',
+  lighthouse: 'Lighthouse',
+  brand: 'Brand Extraction',
+};
+
 const TOOLS = [
   {
     name: 'webScrape',
@@ -617,7 +638,7 @@ function createMcpServer(apiKey: string, baseUrl: string = DEFAULT_BASE_URL): Se
   const ANNOTATED_TOOLS = TOOLS.map((tool) => ({
     ...tool,
     annotations: {
-      title: tool.name,
+      title: TITLES[tool.name] ?? tool.name,
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -919,6 +940,8 @@ async function handleHttpRequest(
   if (url.pathname === '/.well-known/openai-apps-challenge') {
     if (!OPENAI_APPS_CHALLENGE) {
       console.error('[stdio] ERROR: OPENAI_APPS_CHALLENGE environment variable is not set.');
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
       return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
