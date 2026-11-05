@@ -707,14 +707,12 @@ async function serveMcp(
     return;
   }
 
+  // This server only answers tool calls over POST, so it offers no standalone
+  // SSE stream. Proxies cut an idle stream, and the transport then rejects every
+  // reconnect with 409, so clients would report the server as failed.
   if (req.method === 'GET') {
-    if (existing) {
-      existing.lastSeen = Date.now();
-      await safeHandleRequest(existing.transport, req, res);
-      return;
-    }
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'No active session. POST to this endpoint to initialise.' }));
+    res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'POST, DELETE, OPTIONS' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
     return;
   }
 
