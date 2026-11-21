@@ -29,18 +29,27 @@
     "scraping",
     "screenshot",
     "dns",
-    "model-context-protocol"
+    "model-context-protocol",
+    "mcp-server",
+    "web-scraping",
+    "web-search",
+    "screenshot-api",
+    "serp",
+    "ai-agents",
+    "claude",
+    "cursor",
+    "llm"
   ],
   "author": "Geekflare",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/geekflare/geekflare-mcp.git"
+    "url": "git+https://github.com/geekflare/geekflare-api-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/geekflare/geekflare-mcp/issues"
+    "url": "https://github.com/geekflare/geekflare-api-mcp/issues"
   },
-  "homepage": "https://github.com/geekflare/geekflare-mcp#readme",
+  "homepage": "https://github.com/geekflare/geekflare-api-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.16.1",
