@@ -44,7 +44,9 @@ After the server connects, call `siteStatus` with `{"url": "https://example.com"
 - `metaScrape`: page metadata (title, description, Open Graph and more)
 - `brand`: a domain's logos, colours and brand details
 - `screenshot`, `url2Pdf`: capture a page as an image or PDF
-- `siteStatus`, `dnsRecord`, `dnsSec`, `tlsScan`, `redirectCheck`, `brokenLink`, `loadTime`, `mixedContent`, `lighthouse`: website checks
-- `ping`, `mtr`, `openPorts`: network diagnostics
+- `crawl`: every page of a site (or a section of it) as Markdown or HTML
+- `map`: every URL on a site with its status code and depth, without the content
+- `siteStatus`, `dnsRecord`, `tlsScan`, `redirectCheck`, `brokenLink`, `loadTime`, `lighthouse`: website checks
+- `openPorts`: network diagnostics
 
 Each call uses credits from the user's Geekflare account. Full parameters are in [README.md](README.md).

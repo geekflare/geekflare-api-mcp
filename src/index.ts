@@ -61,6 +61,8 @@ const TITLES: Record<string, string> = {
   metaScrape: 'Meta Scrape',
   screenshot: 'Screenshot',
   search: 'Web Search',
+  crawl: 'Crawl Website',
+  map: 'Map Website',
   dnsRecord: 'DNS Records',
   siteStatus: 'Site Status',
   redirectCheck: 'Redirect Check',
@@ -69,10 +71,6 @@ const TITLES: Record<string, string> = {
   openPorts: 'Open Ports',
   tlsScan: 'TLS Scan',
   loadTime: 'Load Time',
-  mixedContent: 'Mixed Content',
-  dnsSec: 'DNSSEC',
-  mtr: 'MTR',
-  ping: 'Ping',
   lighthouse: 'Lighthouse',
   brand: 'Brand Extraction',
 };
@@ -360,6 +358,118 @@ const TOOLS = [
     },
   },
   {
+    name: 'crawl',
+    description:
+      'Crawl a website from a start URL and return every page as Markdown or HTML. Follows links and sitemaps, fetches each page once, and handles JavaScript rendering, retries and proxies. Returns up to 500 pages in one response; if it runs out of time, returns the pages finished so far marked as partial. Each page costs credits (0.25 without a browser, 1 with JavaScript rendering, +4 with a proxy), so set maxPages and allowPatterns to keep the crawl small. Use map first to see what a crawl would visit and cost',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'Where the crawl starts. Any public URL, or a sitemap URL to crawl every page in it',
+        },
+        maxPages: {
+          type: 'number',
+          minimum: 1,
+          maximum: 500,
+          default: 500,
+          description: 'The most pages to fetch. Defaults to 500, the maximum',
+        },
+        maxDepth: {
+          type: 'number',
+          minimum: 0,
+          default: 3,
+          description: 'How many links away from the start URL to go',
+        },
+        allowPatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Only crawl URLs that match one of these patterns, e.g. "/docs/*"',
+        },
+        denyPatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Skip URLs that match one of these patterns, e.g. "/tag/*" or "/login"',
+        },
+        includeExternal: {
+          type: 'boolean',
+          default: false,
+          description: 'Follow links to other domains',
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'html'],
+          default: 'markdown',
+          description: 'Output format for each page',
+        },
+        renderJS: {
+          type: 'boolean',
+          default: true,
+          description: 'Render pages in headless Chrome. Set false for static sites (cheaper)',
+        },
+        proxyMode: {
+          oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['auto', 'true', 'false'] }],
+          description:
+            'auto: use a premium proxy only for pages that block the crawler. true: always use one. Adds 4 credits per proxied page',
+        },
+        proxyCountry: {
+          type: 'string',
+          description:
+            'Country code (ISO alpha-2) to crawl through a premium proxy in, e.g. "de". Adds 4 credits per page',
+        },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'map',
+    description:
+      'List every URL on a website, with its HTTP status code and link depth, without fetching page content. Finds URLs from links and sitemaps, and includes estimatedCredits for crawling the pages that load. Costs 1 credit per 1,000 URLs. Use it to see a site before crawling, find broken pages, or build a URL inventory',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'Where the map starts. Any public URL, or a sitemap URL to list every page in it',
+        },
+        maxPages: {
+          type: 'number',
+          minimum: 1,
+          maximum: 10000,
+          default: 500,
+          description: 'The most URLs to return. Defaults to 500, up to 10,000',
+        },
+        maxDepth: {
+          type: 'number',
+          minimum: 0,
+          maximum: 10,
+          default: 3,
+          description: 'How many links away from the start URL to go, up to 10',
+        },
+        allowPatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Only list URLs that match one of these patterns, e.g. "/blog/*"',
+        },
+        denyPatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Skip URLs that match one of these patterns, e.g. "/tag/*" or "/login"',
+        },
+        includeExternal: {
+          type: 'boolean',
+          default: false,
+          description: 'Follow links to other domains',
+        },
+        timeout: {
+          type: 'number',
+          description: 'Seconds to look before returning what it has found',
+        },
+      },
+      required: ['url'],
+    },
+  },
+  {
     name: 'dnsRecord',
     description: 'Retrieve DNS records for a domain',
     inputSchema: {
@@ -509,50 +619,6 @@ const TOOLS = [
     },
   },
   {
-    name: 'mixedContent',
-    description: 'Check for mixed content issues on a site',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
-        followRedirect: { type: 'boolean', default: false },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'dnsSec',
-    description: 'Check if DNSSEC is enabled for a domain',
-    inputSchema: {
-      type: 'object',
-      properties: { url: { type: 'string', description: 'Target URL' } },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'mtr',
-    description: 'Perform MTR network diagnostic test',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Target URL' },
-        proxyCountry: { type: 'string', description: 'Country code for proxy routing' },
-        followRedirect: { type: 'boolean', default: false },
-      },
-      required: ['url'],
-    },
-  },
-  {
-    name: 'ping',
-    description: 'Ping a host',
-    inputSchema: {
-      type: 'object',
-      properties: { url: { type: 'string', description: 'Target URL or IP' } },
-      required: ['url'],
-    },
-  },
-  {
     name: 'lighthouse',
     description: 'Run Lighthouse audit on a website',
     inputSchema: {
@@ -604,6 +670,8 @@ const ROUTES: Record<string, string> = {
   metaScrape: '/metascraping',
   screenshot: '/screenshot',
   search: '/search',
+  crawl: '/crawl/sync',
+  map: '/map',
   dnsRecord: '/dnsrecord',
   siteStatus: '/up',
   redirectCheck: '/redirectcheck',
@@ -612,10 +680,6 @@ const ROUTES: Record<string, string> = {
   openPorts: '/openport',
   tlsScan: '/tlsscan',
   loadTime: '/loadtime',
-  mixedContent: '/mixedcontent',
-  dnsSec: '/dnssec',
-  mtr: '/mtr',
-  ping: '/ping',
   lighthouse: '/lighthouse',
   brand: '/brand',
 };
