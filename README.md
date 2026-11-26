@@ -18,7 +18,7 @@
 
 - **Hosted and free to connect.** The server runs at `https://mcp.geekflare.com/mcp`, so nothing needs to be installed.
 - **No API key needed in Claude and Cursor.** You sign in with your Geekflare account in the browser instead.
-- **18 tools in one connection.** Your client discovers them automatically and picks the right tool for each request.
+- **16 tools in one connection.** Your client discovers them automatically and picks the right tool for each request.
 - **Free plan:** 500 credits a month, no credit card required. Tool calls use Geekflare API credits.
 
 ## Quick start
@@ -193,6 +193,8 @@ This also works in JetBrains AI Assistant, Continue, GitHub Copilot CLI and any 
 |---|---|
 | `webScrape` | Scrapes a page into Markdown, HTML, JSON or LLM-ready text, with JavaScript rendering, CAPTCHA handling and proxies |
 | `search` | Searches the web, news or images, with optional AI-grounded answers or full Google SERP results |
+| `crawl` | Crawls a whole website from one URL and returns every page as Markdown or HTML |
+| `map` | Lists every URL on a website with its status code and depth, without fetching content |
 | `screenshot` | Captures full-page or viewport screenshots, with ads and cookie banners blocked and device emulation |
 | `metaScrape` | Extracts meta tags, Open Graph and Twitter card data as JSON |
 | `brand` | Returns a company's logo, colours, fonts, social profiles and key links from its domain |
@@ -202,26 +204,25 @@ This also works in JetBrains AI Assistant, Continue, GitHub Copilot CLI and any 
 | `loadTime` | Measures full page load time from a chosen location |
 | `siteStatus` | Checks whether a site is up or down from a chosen location |
 | `redirectCheck` | Traces the full redirect chain of a URL |
-| `mixedContent` | Finds HTTP resources loaded on HTTPS pages |
 | `dnsRecord` | Looks up A, AAAA, CNAME, MX, TXT and other DNS records |
-| `dnsSec` | Checks DNSSEC configuration |
 | `tlsScan` | Inspects TLS/SSL configuration and certificate details |
 | `openPorts` | Scans open ports on a host |
-| `ping` | Pings a host and returns latency |
-| `mtr` | Runs MTR network diagnostics |
 
 ### When to use which tool
 - **Read a known URL:** `webScrape`. Markdown output is the best fit for an LLM's context window.
+- **Read a whole site or section:** `crawl`. Run `map` first to see which URLs it would visit and what it would cost.
 - **Start from a question, not a URL:** `search`. Ask for full page content or a grounded answer when snippets aren't enough.
 - **See what a page looks like:** `screenshot`. Use mobile emulation or a country for localised pages.
 - **Get just the title, description and social tags:** `metaScrape`, which is faster and cheaper than a full scrape.
 - **Find a company's logo and brand colours:** `brand`.
-- **Audit a website:** `lighthouse`, `loadTime`, `brokenLink`, `mixedContent` and `redirectCheck`.
-- **Debug a domain or server:** `dnsRecord`, `dnsSec`, `tlsScan`, `openPorts`, `ping` and `mtr`.
+- **Audit a website:** `lighthouse`, `loadTime`, `brokenLink`, `redirectCheck`, `siteStatus` and `map` (which lists every URL with its status code).
+- **Debug a domain or server:** `dnsRecord`, `tlsScan` and `openPorts`.
 
 ### Example prompts
 - "Scrape https://example.com/pricing and summarise the plans in a table."
 - "Search for the latest news on EU AI regulation and give me three sources."
+- "Crawl https://docs.example.com/guides/ and summarise each page."
+- "Map https://example.com and list every URL that returns a 404."
 - "Take a full-page mobile screenshot of https://example.com."
 - "Check the DNS records and TLS certificate for example.com."
 - "Run a Lighthouse audit on https://example.com and list the top three fixes."
@@ -239,7 +240,7 @@ npx skills add geekflare/geekflare-skills
 ## FAQ
 
 **What is the Geekflare MCP server?**
-It's the official Model Context Protocol server for the Geekflare API. It exposes 18 Geekflare tools to AI assistants, including web scraping, web search, screenshots, PDF conversion, brand data, Lighthouse audits and DNS/TLS/network checks, so the assistant can use the live web while it works.
+It's the official Model Context Protocol server for the Geekflare API. It exposes 16 Geekflare tools to AI assistants, including web scraping, website crawling, web search, screenshots, PDF conversion, brand data, Lighthouse audits and DNS/TLS/network checks, so the assistant can use the live web while it works.
 
 **Is the Geekflare MCP server free?**
 Yes. Connecting to the server is free. Tool calls use Geekflare API credits, and the free plan includes 500 credits a month with no credit card. Paid plans start at $19 a month. See [pricing](https://geekflare.com/pricing/).
@@ -417,6 +418,41 @@ Search the web and return clean, structured results. Supports web, news, and ima
 
 ---
 
+### `crawl`
+
+Crawl a website from a start URL and return every page as Markdown or HTML. Follows links and sitemaps and fetches each page once. Returns up to 500 pages in one response; if the crawl runs out of time, you get the pages finished so far, marked as partial. Each page costs the same as a scrape (0.25 credits without a browser, 1 with JavaScript rendering, +4 with a proxy).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` \* | string | — | Where the crawl starts. A sitemap URL crawls every page in it |
+| `maxPages` | number | `500` | The most pages to fetch (up to 500) |
+| `maxDepth` | number | `3` | How many links away from the start URL to go |
+| `allowPatterns` | array | — | Only crawl URLs matching one of these patterns, e.g. `"/docs/*"` |
+| `denyPatterns` | array | — | Skip URLs matching these patterns, e.g. `"/tag/*"` |
+| `includeExternal` | boolean | `false` | Follow links to other domains |
+| `format` | `markdown` \| `html` | `markdown` | Output format for each page |
+| `renderJS` | boolean | `true` | Render pages in headless Chrome. Set `false` for static sites |
+| `proxyMode` | `auto` \| `true` \| `false` | — | `auto` uses a premium proxy only for pages that block the crawler, `true` always uses one |
+| `proxyCountry` | string | — | Crawl through a premium proxy in this country, e.g. `"de"` |
+
+---
+
+### `map`
+
+List every URL on a website, with its status code and depth from the start URL, without fetching the content. Includes `estimatedCredits` for crawling the pages that load. Costs 1 credit per 1,000 URLs returned.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` \* | string | — | Where the map starts. A sitemap URL lists every page in it |
+| `maxPages` | number | `500` | The most URLs to return (up to 10,000) |
+| `maxDepth` | number | `3` | How many links away from the start URL to go (up to 10) |
+| `allowPatterns` | array | — | Only list URLs matching one of these patterns, e.g. `"/blog/*"` |
+| `denyPatterns` | array | — | Skip URLs matching these patterns |
+| `includeExternal` | boolean | `false` | Follow links to other domains |
+| `timeout` | number | — | Seconds to look before returning what it has found |
+
+---
+
 ### `dnsRecord`
 
 Look up DNS records for a domain.
@@ -574,50 +610,6 @@ Measure full page load time from any location. Optionally test reachability from
 | `proxyCountry` | string | — | Country ISO code |
 | `followRedirect` | boolean | `false` | Follow redirects |
 | `targetCountries` | array of string | — | Up to 3 ISO country codes to also test via proxy, alongside the default US test. Returns a per-location breakdown when set |
-
----
-
-### `mixedContent`
-
-Detect mixed content issues (HTTP resources on HTTPS pages).
-
-| Parameter | Type | Default |
-|---|---|---|
-| `url` \* | string | — |
-| `proxyCountry` | string | — |
-| `followRedirect` | boolean | `false` |
-
----
-
-### `dnsSec`
-
-Check if DNSSEC is enabled and properly configured for a domain.
-
-| Parameter | Type |
-|---|---|
-| `url` \* | string |
-
----
-
-### `mtr`
-
-Run an MTR (My Traceroute) network diagnostic test.
-
-| Parameter | Type | Default |
-|---|---|---|
-| `url` \* | string | — |
-| `proxyCountry` | string | — |
-| `followRedirect` | boolean | `false` |
-
----
-
-### `ping`
-
-Ping a host and return latency.
-
-| Parameter | Type |
-|---|---|
-| `url` \* | string |
 
 ---
 
