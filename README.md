@@ -7,6 +7,7 @@
   <a href="https://claude.ai/new?modal=add-custom-connector&connectorName=Geekflare&connectorUrl=https%3A%2F%2Fmcp.geekflare.com%2Fmcp#customize/connectors"><img src="https://img.shields.io/badge/Add_to_Claude-C66140?style=for-the-badge&logo=claude&logoColor=white" alt="Add to Claude"></a>
   <a href="https://www.npmjs.com/package/@geekflare/mcp"><img src="https://img.shields.io/npm/v/@geekflare/mcp?style=for-the-badge&label=npm" alt="npm version"></a>
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=com.geekflare"><img src="https://img.shields.io/badge/MCP_Registry-com.geekflare%2Fmcp-4338CA?style=for-the-badge" alt="MCP Registry"></a>
+  <a href="https://glama.ai/mcp/servers/geekflare/geekflare-api-mcp"><img src="https://glama.ai/mcp/servers/geekflare/geekflare-api-mcp/badges/score.svg" alt="geekflare/geekflare-api-mcp MCP server"></a>
 </p>
 
 <p align="center">
